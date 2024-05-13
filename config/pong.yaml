@@ -1,0 +1,10 @@
+project_name: cooperative_pong
+train: true
+total_timesteps: 300000
+model: PPO
+model_path: models/
+
+hydra:  
+  output_subdir: null  
+  run:  
+    dir: .

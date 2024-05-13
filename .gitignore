@@ -1,0 +1,6 @@
+models  
+.vscode
+runs
+video
+__pycache__
+wandb
