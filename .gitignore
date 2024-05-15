@@ -4,3 +4,4 @@ runs
 video
 __pycache__
 wandb
+main.log

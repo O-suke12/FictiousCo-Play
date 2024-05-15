@@ -1,10 +1,30 @@
-project_name: cooperative_pong
-train: true
-total_timesteps: 300000
-model: PPO
-model_path: models/
-
 hydra:  
   output_subdir: null  
   run:  
     dir: .
+
+
+project_name: cooperative_pong
+train: true
+
+# training
+total_timesteps: 10000
+model_dir: models/
+model_name: latest
+
+
+# model hyperparameter
+n_steps: 256
+gamma: 0.99 # discount factor
+ent_coef: 0.1 # entropy will be higher when the action is more random => if entropy grows as training goes on, it means the agent is exploring more
+vf_coef: 0.1
+learning_rate: 2.5e-4
+n_epochs: 4
+clip_range: 0.1
+batch_size: 64
+gae_lambda: 0.95
+max_grad_norm: 0.9
+
+#eval
+eval_episodes: 3
+
