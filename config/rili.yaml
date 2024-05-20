@@ -1,0 +1,21 @@
+hydra:  
+  output_subdir: null  
+  run:  
+    dir: .
+
+
+project_name: mpe
+train: true
+num_eps: 10000 
+max_episode_steps: 1000
+batch_size: 30
+
+# training
+total_timesteps: 10000
+model_dir: models/
+model_name: latest
+
+
+#eval
+eval_episodes: 3
+start_eps: 10
