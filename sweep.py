@@ -1,13 +1,11 @@
 import datetime
 import os
 
-import hydra
 import numpy as np
 import pytz
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from omegaconf import DictConfig
 from pettingzoo.mpe import simple_spread_v3
 from torch.distributions.categorical import Categorical
 from tqdm import tqdm
@@ -258,8 +256,19 @@ def evaluate(agent, env, device, cfg, run):
                 )
 
 
-@hydra.main(version_base=None, config_path="config", config_name="ppo")
-def main(cfg: DictConfig):
+def main():
+    cfg = {
+        "project_name": "BachlorThesis_MPE",
+        "train": True,
+        "track": True,
+        "render": True,
+        "save_model": True,
+        "clip_coef": 0.1,
+        "gamma": 0.99,
+        "batch_size": 16,
+        "max_cycles": 200,
+        "total_episodes": 100,
+    }
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if cfg.track:
         japan_tz = pytz.timezone("Japan")

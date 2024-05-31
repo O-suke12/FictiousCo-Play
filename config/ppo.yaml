@@ -1,0 +1,15 @@
+project_name: BachlorThesis_MPE
+train: True
+track: True
+render: True
+save_model: True
+
+
+ent_coef: 0.1
+vf_coef:  0.1
+clip_coef: 0.1
+gamma:  0.99
+batch_size :  16
+max_cycles: 200
+total_episodes : 100
+
