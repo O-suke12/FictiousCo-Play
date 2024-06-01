@@ -11,7 +11,7 @@ from omegaconf import DictConfig
 from pettingzoo.mpe import simple_spread_v3
 from torch.distributions.categorical import Categorical
 from tqdm import tqdm
-
+import omegaconf
 import wandb
 from utils.recoder import VideoRecorder
 
@@ -80,7 +80,18 @@ def unbatchify(x, env):
     return x
 
 
-def training(agent, optimizer, env, device, cfg, num_agents, observation_size, run):
+def training(
+    agent,
+    optimizer,
+    env,
+    device,
+    cfg,
+    num_agents,
+    observation_size,
+    run,
+    ent_coef,
+    vf_coef,
+):
     end_step = 0
     total_episodic_return = 0
     rb_obs = torch.zeros((cfg.max_cycles, num_agents, observation_size)).to(device)
@@ -198,7 +209,7 @@ def training(agent, optimizer, env, device, cfg, num_agents, observation_size, r
                 v_loss = 0.5 * v_loss_max.mean()
 
                 entropy_loss = entropy.mean()
-                loss = pg_loss - cfg.ent_coef * entropy_loss + v_loss * cfg.vf_coef
+                loss = pg_loss - ent_coef * entropy_loss + v_loss * vf_coef
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -224,6 +235,7 @@ def training(agent, optimizer, env, device, cfg, num_agents, observation_size, r
 
     if cfg.save_model:
         torch.save(agent.state_dict(), "models/model.pth")
+    return loss.item()
 
 
 def evaluate(agent, env, device, cfg, run):
@@ -261,20 +273,18 @@ def evaluate(agent, env, device, cfg, run):
 @hydra.main(version_base=None, config_path="config", config_name="ppo")
 def main(cfg: DictConfig):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ent_coef = wandb.config.ent_coef
+    vf_coef = wandb.config.vf_coef
+    lr = wandb.config.lr
+
     if cfg.track:
         japan_tz = pytz.timezone("Japan")
         now = datetime.datetime.now(japan_tz)
         run_name = f"{now.strftime('%m_%d_%H:%M')}"
-        sweep_config = {
-            "method": "bayes",
-            "metric": {"name": "loss", "goal": "minimize"},
-            "parameters": {
-                "ent_coef": {"min": 0.0, "max": 0.01},
-                "vf_coef": {"min": 0.5, "max": 1.0},
-            },
-        }
-        sweep_id = wandb.sweep(sweep_config, project=cfg.project_name)
-        wandb.config = sweep_config
+
+        conf_dict = wandb.config = omegaconf.OmegaConf.to_container(
+            cfg, resolve=True, throw_on_missing=True
+        )
         run = wandb.init(
             project=cfg.project_name,
             sync_tensorboard=True,
@@ -295,18 +305,36 @@ def main(cfg: DictConfig):
     num_agents = len(env.possible_agents)
     num_actions = env.action_space(env.possible_agents[0]).n
     observation_size = env.observation_space(env.possible_agents[0]).shape[0]
+
     agent = Agent(num_actions=num_actions, observation_size=observation_size).to(device)
-    optimizer = optim.Adam(agent.parameters(), lr=0.01, eps=1e-5)
+    optimizer = optim.Adam(agent.parameters(), lr=lr, eps=1e-5)
 
     if cfg.train:
-        wandb.agent(
-            sweep_id,
-            function=training(
-                agent, optimizer, env, device, cfg, num_agents, observation_size, run
-            ),
+        training(
+            agent,
+            optimizer,
+            env,
+            device,
+            cfg,
+            num_agents,
+            observation_size,
+            run,
+            ent_coef,
+            vf_coef,
         )
     evaluate(agent, env, device, cfg, run)
 
 
 if __name__ == "__main__":
-    main()
+    sweep_config = {
+        "method": "bayes",
+        "metric": {"name": "loss", "goal": "minimize"},
+        "parameters": {
+            "ent_coef": {"min": 0.1, "max": 0.001},
+            "vf_coef": {"min": 0.1, "max": 1.0},
+            "lr": {"min": 0.0001, "max": 0.01},
+        },
+    }
+    sweep_id = wandb.sweep(sweep_config, project="BachlorThesis_MPE")
+    wandb.config = sweep_config
+    wandb.agent(sweep_id, function=main)
