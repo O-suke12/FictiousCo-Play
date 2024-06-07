@@ -18,4 +18,4 @@ model_name: latest
 
 #eval
 eval_episodes: 3
-start_eps: 10
+start_eps: 5
