@@ -8,7 +8,7 @@ hydra:
   run:  
     dir: .
 
-project_name: Toy
+project_name: BachlorThesis_MPE
 train: True
 track:  False
-
+render: True
