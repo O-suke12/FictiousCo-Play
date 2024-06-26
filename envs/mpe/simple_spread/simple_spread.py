@@ -51,15 +51,13 @@ simple_spread_v3.env(N=3, local_ratio=0.5, max_cycles=25, continuous_actions=Fal
 
 """
 
-import random
-
 import numpy as np
 from gymnasium.utils import EzPickle
 
-from ...utils.conversions import parallel_wrapper_fn
-from .._mpe_utils.core import Agent, Landmark, World
-from .._mpe_utils.scenario import BaseScenario
-from .._mpe_utils.simple_env import SimpleEnv, make_env
+from envs.mpe._mpe_utils.core import Agent, Landmark, World
+from envs.mpe._mpe_utils.scenario import BaseScenario
+from envs.mpe._mpe_utils.simple_env import SimpleEnv, make_env
+from envs.utils.conversions import parallel_wrapper_fn
 
 
 class raw_env(SimpleEnv, EzPickle):
@@ -67,7 +65,6 @@ class raw_env(SimpleEnv, EzPickle):
         self,
         N=3,
         LN=3,
-        another_agent_type=None,
         local_ratio=0.5,
         max_cycles=25,
         continuous_actions=False,
@@ -85,7 +82,7 @@ class raw_env(SimpleEnv, EzPickle):
             0.0 <= local_ratio <= 1.0
         ), "local_ratio is a proportion. Must be between 0 and 1."
         scenario = Scenario()
-        world = scenario.make_world(N, LN, another_agent_type)
+        world = scenario.make_world(N, LN)
         SimpleEnv.__init__(
             self,
             scenario=scenario,
@@ -103,47 +100,24 @@ parallel_env = parallel_wrapper_fn(env)
 
 
 class Scenario(BaseScenario):
-    def make_world(self, N=3, LN=3, another_agent_type=None):
+    def make_world(self, N=3, LN=3):
         world = World()
         # set any world properties first
         world.dim_c = 2
         num_agents = N
         num_landmarks = LN
-        world.another_agent_type = another_agent_type
-
-        if another_agent_type is None:
-            world.extra_reward_function = None
-        elif another_agent_type == "fixed" or another_agent_type == "fixed_dynamics":
-            world.extra_reward_function = self.fixed_reward
-        elif another_agent_type == "following":
-            world.extra_reward_function = self.following_reward
-        else:
-            raise ValueError(
-                "another_agent_type must be None, 'fixed', 'fixed_dynamics', or 'following'"
-            )
-
         world.collaborative = True
         # add agents
         world.agents = [Agent() for i in range(num_agents)]
         for i, agent in enumerate(world.agents):
-            if i == 0:
-                agent.name = "another_agent"
-            else:
-                agent.name = "flex_agent"
+            agent.name = f"agent_{i}"
             agent.collide = True
             agent.silent = True
             agent.size = 0.15
         # add landmarks
         world.landmarks = [Landmark() for i in range(num_landmarks)]
-        if another_agent_type == "fixed_dynamics" or another_agent_type == "fixed":
-            world.fixed_landmark_no = random.randrange(num_landmarks)
-        else:
-            world.fixed_landmark_no = None
         for i, landmark in enumerate(world.landmarks):
-            if i == world.fixed_landmark_no:
-                landmark.name = "fixed_landmark"
-            else:
-                landmark.name = "landmark %d" % i
+            landmark.name = "landmark %d" % i
             landmark.collide = False
             landmark.movable = False
         return world
@@ -209,35 +183,8 @@ class Scenario(BaseScenario):
             rew -= min(dists)
         return rew
 
-    def fixed_reward(self, agent, world):
-        rew = 0
-        another_agent = agent
-        fixed_landmark = world.landmarks[world.fixed_landmark_no]
-
-        dist = np.sqrt(
-            np.sum(np.square(another_agent.state.p_pos - fixed_landmark.state.p_pos))
-        )
-        rew -= dist
-        return rew
-
-    def following_reward(self, agent, world):
-        rew = 0
-        flex_agent = world.agents[1]
-        dist = np.sqrt(np.sum(np.square(agent.state.p_pos - flex_agent.state.p_pos)))
-        rew -= dist
-        return rew
-
     def observation(self, agent, world):
         # get positions of all entities in this agent's reference frame
-        fixed_landmark = []
-        if world.fixed_landmark_no is not None:
-            if agent.name == "flex_agent":
-                fixed_landmark.append(np.array([0]))
-            else:
-                fixed_landmark.append(np.array([world.fixed_landmark_no]))
-        else:
-            pass
-
         entity_pos = []
         for entity in world.landmarks:  # world.entities:
             entity_pos.append(entity.state.p_pos - agent.state.p_pos)
@@ -250,10 +197,5 @@ class Scenario(BaseScenario):
             comm.append(other.state.c)
             other_pos.append(other.state.p_pos - agent.state.p_pos)
         return np.concatenate(
-            [agent.state.p_vel]
-            + [agent.state.p_pos]
-            + entity_pos
-            + other_pos
-            + comm
-            + fixed_landmark
+            [agent.state.p_vel] + [agent.state.p_pos] + entity_pos + other_pos + comm
         )

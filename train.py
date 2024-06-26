@@ -1,148 +1,296 @@
-import datetime
 import os
+from datetime import datetime
 
 import hydra
-import numpy as np
 import pytz
+import torch
 from omegaconf import DictConfig
-from pettingzoo.mpe import simple_spread_v3
-from stable_baselines3 import PPO
 
 import wandb
+from envs.mpe_fixed_env import simple_spread_v3
+from originalLILI import LILI
+from originPPO import PPO
+from scripted_agent import ANOTHER_AGENT
 from utils.recoder import VideoRecorder
-from utils.replay_memory import ReplayMemory
-from rili.rili import RILI
+
+lili = False
+env_name = "simple_spread_v3"
+agent_num = 2
+landmark_num = 3
+agent_type = [None, "fixed", "fixed_dynamics", "following"]
+another_agent_type = agent_type[2]
+encoder_decoder_pretrain = False
+max_cycle = 100
+
+env = simple_spread_v3.env(
+    N=agent_num,
+    LN=landmark_num,
+    another_agent_type=another_agent_type,
+    local_ratio=0.5,
+    max_cycles=max_cycle,
+    continuous_actions=False,
+)
+validation_env = simple_spread_v3.env(
+    N=agent_num,
+    LN=landmark_num,
+    another_agent_type=another_agent_type,
+    local_ratio=0.5,
+    max_cycles=max_cycle,
+    continuous_actions=False,
+    render_mode="rgb_array",
+)
+
+if lili:
+    agent_type = "lili"
+    cuda_num = 0
+else:
+    agent_type = "ppo"
+    cuda_num = 1
+
+name = f"{another_agent_type}_{agent_type}_{agent_num}agent_{landmark_num}land"
+
+state_dim = env.observation_space(env.possible_agents[0]).shape[0]
+action_dim = env.action_space(env.possible_agents[0]).n
+val_count = 0
 
 
-class Workspace:
-    def __init__(self, cfg: DictConfig):
-        japan_tz = pytz.timezone("Japan")
-        now = datetime.datetime.now(japan_tz)
+root_dir = os.getcwd()
+recoder = VideoRecorder(root_dir)
 
-        self.run_name = f"{now.strftime('%m_%d_%H:%M')}"
-        self.cfg = cfg
-        self.model_path = cfg.model_dir + cfg.model_name
-        # self.run = wandb.init(
-        #     project=cfg.project_name,
-        #     sync_tensorboard=True,
-        #     monitor_gym=True,
-        #     name=self.run_name,
-        # )
+device = torch.device("cpu")
 
-        root_dir = os.getcwd()
-        self.recoder = VideoRecorder(root_dir)
+if torch.cuda.is_available():
+    device = torch.device(f"cuda:{cuda_num}")
+    torch.cuda.empty_cache()
 
-        self.env = simple_spread_v3.env(
-            N=2, local_ratio=0.5, max_cycles=25, continuous_actions=False
+directory = "models"
+if not os.path.exists(directory):
+    os.makedirs(directory)
+
+directory = directory + "/" + env_name + "/"
+if not os.path.exists(directory):
+    os.makedirs(directory)
+
+another_checkpoint_path = directory + f"another_{name}.pth"
+flex_checkpoint_path = directory + f"flex_{name}.pth"
+
+
+################################### Training ###################################
+@hydra.main(version_base=None, config_path="config", config_name="lili")
+def train(cfg: DictConfig):
+    japan_tz = pytz.timezone("Japan")
+    now = datetime.now(japan_tz)
+
+    if cfg.track:
+        run_name = f"{name}_{now.strftime('%m_%d_%H:%M')}"
+        run = wandb.init(
+            project=cfg.project_name,
+            sync_tensorboard=True,
+            monitor_gym=True,
+            name=run_name,
         )
-        self.env.reset()
+    else:
+        run = None
 
-        agent_name = self.env.agents[0]
-        action_space = int(self.env.action_space(agent_name).n)
-        observation_space = self.env.observation_space(agent_name).shape[0]
-
-        self.agent = RILI(action_space, observation_space, self.cfg.max_episode_steps)
-        self.memory = ReplayMemory(
-            capacity=self.cfg.num_eps, interaction_length=cfg.max_episode_steps
+    ################# training procedure ################
+    if lili:
+        print(
+            "============================================================================================"
         )
-
-    def train(self):
-        z_prev = np.zeros(10)
-        z = np.zeros(10)
-        for i_episode in range(1, self.cfg.num_eps + 1):
-            if len(self.memory) > 4:
-                z = self.agent.predict_latent(
-                    self.memory.get_steps(self.memory.position - 4),
-                    self.memory.get_steps(self.memory.position - 3),
-                    self.memory.get_steps(self.memory.position - 2),
-                    self.memory.get_steps(self.memory.position - 1),
-                )
-
-            episode_reward = 0
-            episode_steps = 0
-            done = False
-            state = self.env.reset()
-
-            while not done:
-                if i_episode < self.cfg.start_eps:
-                    action = self.env.action_space(self.env.agents[0]).sample()
-                else:
-                    action = self.agent.select_action(state, z)
-
-                if len(self.memory) > self.cfg.batch_size:
-                    (
-                        critic_1_loss,
-                        critic_2_loss,
-                        policy_loss,
-                        ae_loss,
-                        curr_loss,
-                        next_loss,
-                        kl_loss,
-                    ) = self.agent.update_parameters(self.memory, self.cfg.batch_size)
-
-                next_state, reward, done, _ = self.env.step(action)
-                episode_steps += 1
-                episode_reward += reward
-
-                mask = (
-                    1
-                    if episode_steps == self.env._max_episode_steps
-                    else float(not done)
-                )
-                self.memory.push_timestep(state, action, reward, next_state, mask)
-                state = next_state
-
-    def eval(self):
-        model = PPO.load(self.model_path)
-
-        env = simple_spread_v3.env(
-            max_cycles=500,
-            x_size=16,
-            y_size=16,
-            shared_reward=True,
-            n_evaders=30,
-            n_pursuers=8,
-            obs_range=7,
-            n_catch=2,
-            freeze_evaders=False,
-            tag_reward=0.01,
-            catch_reward=5.0,
-            urgency_reward=-0.1,
-            surround=True,
-            constraint_window=1.0,
+        print("Currently using LILI")
+        print(
+            "============================================================================================"
+        )
+        flex_agent = LILI(
+            state_dim,
+            action_dim,
+            cfg.z_dim,
+            device,
+            cfg,
+            run=run,
         )
 
-        for eval_episode in range(self.cfg.eval_episodes):
-            self.recoder.init()
-            env.reset()
-            video_path = f"latest_{eval_episode}.mp4"
-            for agent in env.agent_iter():
-                observation, reward, done, truncation, info = env.last()
+    else:
+        print(
+            "============================================================================================"
+        )
+        print("Currently using PPO")
+        print(
+            "============================================================================================"
+        )
+        flex_agent = PPO(
+            state_dim,
+            action_dim,
+            device,
+            cfg,
+            run=run,
+        )
 
-                if done or truncation:
-                    action = None
-                else:
-                    action = (
-                        model.predict(observation, deterministic=True)[0]
-                        if not done
-                        else None
+    another_agent = ANOTHER_AGENT(env, another_agent_type, 0.1)
+
+    agents = {}
+
+    agents[env.possible_agents[0]] = another_agent
+    agents[env.possible_agents[1]] = flex_agent
+
+    if lili and cfg.load_ed:
+        flex_agent.load_ed(flex_checkpoint_path)
+
+    # track total training time
+    start_time = now
+
+    # printing and logging variables
+    print_running_reward = 0
+    print_running_episodes = 0
+
+    last_update_time_step = 0
+
+    time_step = 0
+    i_episode = 0
+
+    # if cfg.data_collect:
+    #     collect(agents, env, another_checkpoint_path, flex_checkpoint_path, cfg)
+
+    # training loop
+    while time_step <= cfg.max_training_timesteps:
+        env.reset()
+        current_ep_reward = 0
+
+        for t in range(1, cfg.max_ep_len + 1):
+            for agent in env.possible_agents:
+                # select action with policy
+                state, reward, done, truncated, info = env.last()
+                action = agents[agent].select_action(state)
+
+                # saving reward and is_terminals
+                if agents[agent] == flex_agent:
+                    agents[agent].buffer.rewards.append(reward)
+                    agents[agent].buffer.is_terminals.append(done)
+
+                time_step += 1
+                current_ep_reward += reward
+
+                # printing average reward
+                if time_step % cfg.print_freq == 0:
+                    # print average reward till last episode
+                    print_avg_reward = print_running_reward / print_running_episodes
+                    print_avg_reward = round(print_avg_reward, 2)
+
+                    print(
+                        "Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(
+                            i_episode, time_step, print_avg_reward
+                        )
                     )
 
+                    print_running_reward = 0
+                    print_running_episodes = 0
+                    if cfg.track:
+                        run.log(
+                            {
+                                "average_reward": print_avg_reward,
+                            }
+                        )
+
+                # save model weights
+                if time_step % cfg.save_model_freq == 0:
+                    print(
+                        "--------------------------------------------------------------------------------------------"
+                    )
+                    flex_agent.save(flex_checkpoint_path)
+                    # another_agent.save(another_checkpoint_path)
+                    print("model saved")
+                    print(
+                        "Elapsed Time  : ",
+                        now - start_time,
+                    )
+                    print(
+                        "--------------------------------------------------------------------------------------------"
+                    )
+                    validation(agents, cfg, run)
+                    agents["another_agent"].change_env(env)
+                # break; if the episode is over
+                if done or truncated:
+                    action = None
+
                 env.step(action)
-                self.recoder.record(env)
-            self.recoder.save(video_path)
-            self.run.log({"video": wandb.Video(f"video/{video_path}", fps=30)})
-        self.run.finish()
-        env.close()
+            if done or truncated:
+                break
+
+        # update PPO agent
+        if time_step - last_update_time_step >= cfg.update_timestep:
+            # another_agent.update()
+            flex_agent.update()
+            last_update_time_step = time_step
+
+        print_running_reward += current_ep_reward
+        print_running_episodes += 1
+
+        i_episode += 1
+
+    env.close()
+
+    # print total training time
+    print(
+        "============================================================================================"
+    )
+    end_time = now
+    print("Started training at (GMT) : ", start_time)
+    print("Finished training at (GMT) : ", end_time)
+    print("Total training time  : ", end_time - start_time)
+    print(
+        "============================================================================================"
+    )
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rili")
-def main(cfg: DictConfig):
-    workspace = Workspace(cfg)
-    if cfg.train:
-        workspace.train()
-    # workspace.eval()
+def validation(agents, cfg, run):
+    test_running_reward = 0
+    global val_count
+
+    agents["another_agent"].change_env(env)
+
+    with torch.no_grad():
+        ep_reward = 0
+        validation_env.reset()
+        recoder.init()
+
+        for t in range(1, cfg.max_ep_len + 1):
+            for agent in validation_env.possible_agents:
+                state, reward, done, truncated, info = validation_env.last()
+                action = agents[agent].just_select_action(state)
+
+                ep_reward += reward
+
+                recoder.record(validation_env)
+                # break; if the episode is over
+                if done or truncated:
+                    action = None
+                    break
+                validation_env.step(action)
+            if done or truncated:
+                break
+    val_count += 1
+    video_name = f"valid_{val_count}.mp4"
+    recoder.save(video_name)
+    if cfg.track:
+        run.log(
+            {
+                "valid_average_reward": ep_reward,
+            }
+        )
+        run.log({"video": wandb.Video(f"{recoder.save_dir}/{video_name}", fps=24)})
+
+    print(
+        "============================================================================================"
+    )
+
+    avg_test_reward = ep_reward
+    avg_test_reward = round(avg_test_reward, 2)
+    print("average test reward : " + str(avg_test_reward))
+
+    print(
+        "============================================================================================"
+    )
 
 
 if __name__ == "__main__":
-    main()
+    train()

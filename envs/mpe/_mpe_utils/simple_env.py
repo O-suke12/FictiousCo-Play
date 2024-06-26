@@ -1,5 +1,4 @@
 import os
-import random
 
 import gymnasium
 import numpy as np
@@ -8,9 +7,9 @@ from gymnasium import spaces
 from gymnasium.utils import seeding
 
 from envs import AECEnv
-from envs.mpe_fixed_env._mpe_utils.core import Agent
+from envs.mpe._mpe_utils.core import Agent
 from envs.utils import wrappers
-from envs.utils.agent_selector import agent_selector
+from envs.utils.agent_selector import AgentSelector
 
 alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
@@ -56,7 +55,6 @@ class SimpleEnv(AECEnv):
         self.game_font = pygame.freetype.Font(
             os.path.join(os.path.dirname(__file__), "secrcode.ttf"), 24
         )
-        self.extra_reward_function = world.extra_reward_function
 
         # Set up the drawing window
 
@@ -72,21 +70,12 @@ class SimpleEnv(AECEnv):
         self.scenario.reset_world(self.world, self.np_random)
 
         self.agents = [agent.name for agent in self.world.agents]
-        for agent in self.world.agents:
-            if agent.name == "another_agent":
-                self.another_agent = agent
-        # for landmark in self.world.landmarks:
-        #     if landmark.name == "fixed_landmark":
-        #         self.fixed_landmark = landmark
-        self.change_steps = random.randint(
-            (max_cycles / 2) - max_cycles / 10, (max_cycles / 2) + max_cycles / 10
-        )
         self.possible_agents = self.agents[:]
         self._index_map = {
             agent.name: idx for idx, agent in enumerate(self.world.agents)
         }
 
-        self._agent_selector = agent_selector(self.agents)
+        self._agent_selector = AgentSelector(self.agents)
 
         # set spaces
         self.action_spaces = dict()
@@ -197,23 +186,13 @@ class SimpleEnv(AECEnv):
         for agent in self.world.agents:
             agent_reward = float(self.scenario.reward(agent, self.world))
             if self.local_ratio is not None:
-                if (
-                    agent == self.another_agent
-                    and self.extra_reward_function is not None
-                ):
-                    # reward += self.extra_reward_function(agent, world=self.world)
-                    reward = (
-                        global_reward * (1 - self.local_ratio)
-                        + self.extra_reward_function(agent, world=self.world)
-                        * self.local_ratio
-                    )
-                else:
-                    reward = (
-                        global_reward * (1 - self.local_ratio)
-                        + agent_reward * self.local_ratio
-                    )
+                reward = (
+                    global_reward * (1 - self.local_ratio)
+                    + agent_reward * self.local_ratio
+                )
             else:
                 reward = agent_reward
+
             self.rewards[agent.name] = reward
 
     # set env action for a particular agent
@@ -272,12 +251,6 @@ class SimpleEnv(AECEnv):
         if next_idx == 0:
             self._execute_world_step()
             self.steps += 1
-
-            if self.steps == self.change_steps:
-                if self.world.another_agent_type == "fixed_dynamics":
-                    self.world.fixed_landmark_no = random.randint(
-                        0, len(self.world.landmarks) - 1
-                    )
             if self.steps >= self.max_cycles:
                 for a in self.agents:
                     self.truncations[a] = True
@@ -336,18 +309,9 @@ class SimpleEnv(AECEnv):
             y = (y / cam_range) * self.height // 2 * 0.9
             x += self.width // 2
             y += self.height // 2
-            if entity == self.another_agent:
-                pygame.draw.circle(self.screen, (0, 255, 0), (x, y), entity.size * 350)
-            elif (
-                entity is self.world.landmarks[self.world.fixed_landmark_no]
-                if self.world.fixed_landmark_no is not None
-                else False
-            ):
-                pygame.draw.circle(self.screen, (0, 255, 0), (x, y), entity.size * 350)
-            else:
-                pygame.draw.circle(
-                    self.screen, entity.color * 200, (x, y), entity.size * 350
-                )  # 350 is an arbitrary scale factor to get pygame to render similar sizes as pyglet
+            pygame.draw.circle(
+                self.screen, entity.color * 200, (x, y), entity.size * 350
+            )  # 350 is an arbitrary scale factor to get pygame to render similar sizes as pyglet
             pygame.draw.circle(
                 self.screen, (0, 0, 0), (x, y), entity.size * 350, 1
             )  # borders

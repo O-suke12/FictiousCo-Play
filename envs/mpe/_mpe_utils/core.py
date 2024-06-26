@@ -86,9 +86,6 @@ class World:  # multi-agent world
         # list of agents and entities (can change at execution-time!)
         self.agents = []
         self.landmarks = []
-        self.fixed_landmark_no = None
-        self.extra_reward_function = None
-        self.another_agent_type = None
         # communication channel dimensionality
         self.dim_c = 0
         # position dimensionality
