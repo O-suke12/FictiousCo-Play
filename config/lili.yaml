@@ -8,25 +8,21 @@ hydra:
   run:  
     dir: .
 
-project_name: BachlorThesis_MPE
-train: True
-track:  False
-render: True
+project_name: LILI_and_PPO_MPE
+track:  True  
+load_ed: False
 
-max_ep_len:  1000  # max timesteps in one episode
-max_training_timesteps: 3000000  # break training loop if timeteps > max_training_timesteps
-encoder_decoder_training_timesteps: 10000
+max_ep_len:  200  # max timesteps in one episode
+max_training_timesteps: 5000000  # break training loop if timeteps > max_training_timesteps
+save_model_freq: 100000  
+update_timestep: 20000  #40000# update policy every n timesteps
 print_freq: 10000  # print avg reward in the interval (in num timesteps)
-log_freq: 2000  # log avg reward in the interval (in num timesteps)
-save_model_freq: 300000  # save model frequency (in num timesteps)
+encoder_decoder_training_timesteps: 500
 
-update_timestep: 4000  # update policy every n timesteps
-encoder_decoder_update_timestep: 100
-K_epochs: 80  # update policy for K epochs in one PPO update
-
+z_dim: 8
+K_epochs: 40  #元は80 update policy for K epochs in one PPO update
 eps_clip: 0.2  # clip parameter for PPO
 gamma: 0.99  # discount factor
-
 lr_actor: 0.0003  # learning rate for actor network
 lr_critic: 0.001  # learning rate for critic network
 

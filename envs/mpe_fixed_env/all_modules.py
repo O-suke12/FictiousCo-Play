@@ -1,4 +1,4 @@
-from pettingzoo.mpe import (
+from envs.mpe_fixed_env import (
     simple_adversary_v3,
     simple_crypto_v3,
     simple_push_v3,

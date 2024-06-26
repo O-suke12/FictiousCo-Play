@@ -1,4 +1,4 @@
-from envs.utils.deprecated_module import deprecated_handler
+from ..utils.deprecated_module import deprecated_handler
 
 
 def __getattr__(env_name):
