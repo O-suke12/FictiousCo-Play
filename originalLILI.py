@@ -95,7 +95,7 @@ class ActorCritic(nn.Module):
         hidden_dim = 256
 
         self.actor = nn.Sequential(
-            nn.Linear(state_dim, 64),
+            nn.Linear(input_dim, 64),
             nn.Tanh(),
             nn.Linear(64, 64),
             nn.Tanh(),
@@ -104,7 +104,7 @@ class ActorCritic(nn.Module):
         )
         # critic
         self.critic = nn.Sequential(
-            nn.Linear(state_dim, 64),
+            nn.Linear(input_dim, 64),
             nn.Tanh(),
             nn.Linear(64, 64),
             nn.Tanh(),
@@ -213,11 +213,11 @@ class LILI:
                 z = np.zeros((1, self.z_dim))
 
             state_latent = np.concatenate((state, z[0]))
-            state = torch.FloatTensor(state).to(self.device)
+            state = torch.FloatTensor(state_latent).to(self.device)
             action, action_logprob, state_val = self.policy_old.act(state)
 
-        self.buffer.state_latent.append(state[self.state_dim :])
-        self.buffer.states.append(state)
+        self.buffer.state_latent.append(state)
+        self.buffer.states.append(state[: self.state_dim])
         self.buffer.actions.append(action)
         self.buffer.logprobs.append(action_logprob)
         self.buffer.state_values.append(state_val)
@@ -226,7 +226,15 @@ class LILI:
 
     def just_select_action(self, state):
         with torch.no_grad():
-            state = torch.FloatTensor(state).to(self.device)
+            if len(self.buffer.states) > 1:
+                tau = self.make_one_tau(state)
+                z = self.get_latent_strategies(tau)
+                z = z.cpu().detach().numpy()
+            else:
+                z = np.zeros((1, self.z_dim))
+
+            state_latent = np.concatenate((state, z[0]))
+            state = torch.FloatTensor(state_latent).to(self.device)
             action, action_logprob, state_val = self.policy_old.act(state)
         return action.item()
 
@@ -249,6 +257,11 @@ class LILI:
         # convert list to tensor
         old_states = (
             torch.squeeze(torch.stack(self.buffer.states, dim=0))
+            .detach()
+            .to(self.device)
+        )
+        old_state_latents = (
+            torch.squeeze(torch.stack(self.buffer.state_latent, dim=0))
             .detach()
             .to(self.device)
         )
@@ -288,7 +301,7 @@ class LILI:
             reward_dist, state_dist = self.encoder_decoder(tau)
             # Evaluating old actions and values
             logprobs, state_values, dist_entropy = self.policy.evaluate(
-                old_states, old_actions
+                old_state_latents, old_actions
             )
 
             # match state_values tensor dimensions with rewards tensor

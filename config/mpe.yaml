@@ -9,17 +9,24 @@ hydra:
     dir: .
 
 project_name: LILI_and_PPO_MPE
-track:  True  
+
+track: True  
+agent_num: 2
+landmark_num: 2
+lili: True
+train: False
 load_ed: False
 
-max_ep_len:  200  # max timesteps in one episode
-max_training_timesteps: 5000000  # break training loop if timeteps > max_training_timesteps
+
+test_episode_num: 5
+max_cycle:  200  # max timesteps in one episode
+max_training_timesteps:  2000000  # break training loop if timeteps > max_training_timesteps
 save_model_freq: 100000  
-update_timestep: 20000  #40000# update policy every n timesteps
+update_timestep: 4000  #update policy every n timesteps
 print_freq: 10000  # print avg reward in the interval (in num timesteps)
 encoder_decoder_training_timesteps: 500
 
-z_dim: 8
+z_dim: 5
 K_epochs: 40  #元は80 update policy for K epochs in one PPO update
 eps_clip: 0.2  # clip parameter for PPO
 gamma: 0.99  # discount factor

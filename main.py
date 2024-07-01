@@ -1,144 +1,430 @@
-import datetime
 import os
+from datetime import datetime
 
 import hydra
 import numpy as np
 import pytz
-import supersuit as ss
 import torch
-import torch.optim as optim
+from matplotlib import pyplot as plt
 from omegaconf import DictConfig
-from pettingzoo.butterfly import cooperative_pong_v5
-from stable_baselines3 import PPO
 
 import wandb
-from agent import Agent
-from recoder import VideoRecorder
-from wandb.integration.sb3 import WandbCallback
+from envs.mpe_fixed_env import simple_spread_v3
+from originalLILI import LILI
+from originPPO import PPO
+from scripted_agent import ANOTHER_AGENT
+from utils.recoder import VideoRecorder
+
+val_count = 0
+japan_tz = pytz.timezone("Japan")
+now = datetime.now(japan_tz)
 
 
-class Workspace:
-    def __init__(self, cfg: DictConfig):
-        japan_tz = pytz.timezone("Japan")
-        now = datetime.datetime.now(japan_tz)
+def train(
+    cfg: DictConfig, run, env, validation_env, recoder, device, flex_checkpoint_path
+):
+    state_dim = env.observation_space(env.possible_agents[0]).shape[0]
+    action_dim = env.action_space(env.possible_agents[0]).n
 
-        self.run_name = f"{now.strftime('%m_%d_%H:%M')}"
-        self.cfg = cfg
-        self.model_path = cfg.model_dir + cfg.model_name
-        self.run = wandb.init(
+    if cfg.lili:
+        print(
+            "============================================================================================"
+        )
+        print("Currently using LILI")
+        print(
+            "============================================================================================"
+        )
+        flex_agent = LILI(
+            state_dim,
+            action_dim,
+            cfg.z_dim,
+            device,
+            cfg,
+            run=run,
+        )
+
+    else:
+        print(
+            "============================================================================================"
+        )
+        print("Currently using PPO")
+        print(
+            "============================================================================================"
+        )
+        flex_agent = PPO(
+            state_dim,
+            action_dim,
+            device,
+            cfg,
+            run=run,
+        )
+
+    another_agent = ANOTHER_AGENT(env, 0.5)
+
+    agents = {}
+
+    agents[env.possible_agents[0]] = another_agent
+    agents[env.possible_agents[1]] = flex_agent
+
+    if cfg.lili and cfg.load_ed:
+        flex_agent.load_ed(flex_checkpoint_path)
+
+    # track total training time
+    start_time = now
+
+    # printing and logging variables
+    print_running_reward = 0
+    print_running_episodes = 0
+
+    last_update_time_step = 0
+
+    time_step = 0
+    i_episode = 0
+
+    # if cfg.data_collect:
+    #     collect(agents, env, another_checkpoint_path, flex_checkpoint_path, cfg)
+
+    # training loop
+    while time_step <= cfg.max_training_timesteps:
+        env.reset()
+        current_ep_reward = 0
+        another_agent.set_agent_type(env.world.another_agent_type)
+
+        for t in range(1, cfg.max_cycle + 1):
+            for agent in env.possible_agents:
+                # select action with policy
+                state, reward, done, truncated, info = env.last()
+                action = agents[agent].select_action(state)
+
+                # saving reward and is_terminals
+                if agents[agent] == flex_agent:
+                    agents[agent].buffer.rewards.append(reward)
+                    agents[agent].buffer.is_terminals.append(done)
+
+                time_step += 1
+                current_ep_reward += reward
+
+                # printing average reward
+                if time_step % cfg.print_freq == 0:
+                    # print average reward till last episode
+                    print_avg_reward = print_running_reward / print_running_episodes
+                    print_avg_reward = round(print_avg_reward, 2)
+
+                    print(
+                        "Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(
+                            i_episode, time_step, print_avg_reward
+                        )
+                    )
+
+                    print_running_reward = 0
+                    print_running_episodes = 0
+                    if cfg.track:
+                        run.log(
+                            {
+                                "average_reward": print_avg_reward,
+                            }
+                        )
+
+                # save model weights
+                if time_step % cfg.save_model_freq == 0:
+                    print(
+                        "--------------------------------------------------------------------------------------------"
+                    )
+                    flex_agent.save(flex_checkpoint_path)
+                    # another_agent.save(another_checkpoint_path)
+                    print("model saved")
+                    print(
+                        "Elapsed Time  : ",
+                        now - start_time,
+                    )
+                    print(
+                        "--------------------------------------------------------------------------------------------"
+                    )
+                    validation(cfg, run, agents, validation_env, recoder)
+                    agents["another_agent"].change_env(env)
+                    agents["another_agent"].set_agent_type(env.world.another_agent_type)
+
+                # break; if the episode is over
+                if done or truncated:
+                    action = None
+
+                env.step(action)
+            if done or truncated:
+                break
+
+        # update PPO agent
+        if time_step - last_update_time_step >= cfg.update_timestep:
+            # another_agent.update()
+            flex_agent.update()
+            last_update_time_step = time_step
+
+        print_running_reward += current_ep_reward
+        print_running_episodes += 1
+
+        i_episode += 1
+
+    env.close()
+
+    # print total training time
+    print(
+        "============================================================================================"
+    )
+    end_time = now
+    print("Started training at (GMT) : ", start_time)
+    print("Finished training at (GMT) : ", end_time)
+    print("Total training time  : ", end_time - start_time)
+    print(
+        "============================================================================================"
+    )
+
+
+def validation(cfg, run, agents, validation_env, recoder):
+    test_running_reward = 0
+    global val_count
+
+    with torch.no_grad():
+        ep_reward = 0
+        validation_env.reset()
+        agents["another_agent"].change_env(validation_env)
+        agents["another_agent"].set_agent_type(validation_env.world.another_agent_type)
+        recoder.init()
+
+        for t in range(1, cfg.max_cycle + 1):
+            for agent in validation_env.possible_agents:
+                state, reward, done, truncated, info = validation_env.last()
+                action = agents[agent].just_select_action(state)
+
+                ep_reward += reward
+
+                recoder.record(validation_env)
+                # break; if the episode is over
+                if done or truncated:
+                    action = None
+                    break
+                validation_env.step(action)
+            if done or truncated:
+                break
+    val_count += 1
+    video_name = f"valid_{val_count}.mp4"
+    recoder.save(video_name)
+    if cfg.track:
+        run.log(
+            {
+                "valid_average_reward": ep_reward,
+            }
+        )
+        run.log({"video": wandb.Video(f"{recoder.save_dir}/{video_name}", fps=24)})
+
+    print(
+        "============================================================================================"
+    )
+
+    avg_test_reward = ep_reward
+    avg_test_reward = round(avg_test_reward, 2)
+    print("average test reward : " + str(avg_test_reward))
+
+    print(
+        "============================================================================================"
+    )
+
+
+def test(cfg: DictConfig, run, test_env, recoder, device, directory):
+    print(
+        "============================================================================================"
+    )
+    print("Testing")
+    print(
+        "============================================================================================"
+    )
+    state_dim = test_env.observation_space(test_env.possible_agents[0]).shape[0]
+    action_dim = test_env.action_space(test_env.possible_agents[0]).n
+
+    lili_model_name = f"lili_{cfg.agent_num}agent_{cfg.landmark_num}land"
+    lili_check_point = directory + f"{lili_model_name}.pth"
+    lili = LILI(
+        state_dim,
+        action_dim,
+        cfg.z_dim,
+        device,
+        cfg,
+        run=run,
+    )
+    ppo_model_name = f"ppo_{cfg.agent_num}agent_{cfg.landmark_num}land"
+    ppo_check_point = directory + f"{ppo_model_name}.pth"
+    ppo = PPO(
+        state_dim,
+        action_dim,
+        device,
+        cfg,
+        run=run,
+    )
+    lili.load(lili_check_point)
+    lili.load_ed(lili_check_point)
+    ppo.load(ppo_check_point)
+
+    another_agent = ANOTHER_AGENT(test_env, 0.1)
+
+    flex_types = ["ppo", "lili"]
+
+    lili_agents = {}
+    ppo_agents = {}
+    lili_agents[test_env.possible_agents[0]] = another_agent
+    lili_agents[test_env.possible_agents[1]] = lili
+    ppo_agents[test_env.possible_agents[0]] = another_agent
+    ppo_agents[test_env.possible_agents[1]] = ppo
+    test_agents_dict = {}
+    test_agents_dict["ppo"] = ppo_agents
+    test_agents_dict["lili"] = lili_agents
+
+    ppo_results = {}
+    lili_results = {}
+    results = {}
+    results["ppo"] = ppo_results
+    results["lili"] = lili_results
+
+    seeds = np.random.randint(0, 1001, 5).tolist()
+    for flex_type in flex_types:
+        test_agents = test_agents_dict[flex_type]
+        for another_type in test_env.world.another_agent_type_list:
+            each_agent_reward = 0
+            for i in range(cfg.test_episode_num):
+                ep_reward = 0
+                test_env.reset(seeds[i])
+                test_agents["another_agent"].change_env(test_env)
+                test_agents["another_agent"].set_agent_type(
+                    test_env.world.another_agent_type
+                )
+                recoder.init()
+                ep_reward = 0
+                for t in range(1, cfg.max_cycle + 2):
+                    for agent in test_env.possible_agents:
+                        state, reward, done, truncated, info = test_env.last()
+                        action = test_agents[agent].just_select_action(state)
+
+                        ep_reward += reward
+
+                        recoder.record(test_env)
+                        if done or truncated:
+                            action = None
+                        test_env.step(action)
+                    if done or truncated:
+                        break
+
+                video_name = f"test_{flex_type}_{i}.mp4"
+                recoder.save(video_name)
+                each_agent_reward += ep_reward
+                if cfg.track:
+                    run.log(
+                        {
+                            "test_video": wandb.Video(
+                                f"{recoder.save_dir}/{video_name}", fps=24
+                            )
+                        }
+                    )
+            results[flex_type][another_type] = each_agent_reward / cfg.test_episode_num
+
+    labels = results[flex_types[0]].keys()
+    x = range(len(labels))
+
+    fig, ax = plt.subplots()
+    ax.bar(x, results[flex_types[0]].values(), width=0.4, label=flex_types[0])
+    ax.bar(
+        [i + 0.4 for i in x],
+        results[flex_types[1]].values(),
+        width=0.4,
+        label=flex_types[1],
+    )
+
+    ax.set_xlabel("Another Agent Type")
+    ax.set_ylabel("Average Reward")
+    ax.set_title(f"Comparison of {flex_types[0]} and {flex_types[1]}")
+    ax.set_xticks([i + 0.2 for i in x])
+    ax.set_xticklabels(labels)
+    ax.legend()
+    fig.savefig("comparison.png")
+    if cfg.track:
+        run.log({"test_results": wandb.Image("comparison.png")})
+
+    print(
+        "============================================================================================"
+    )
+    print("All done")
+    print(
+        "============================================================================================"
+    )
+
+
+@hydra.main(version_base=None, config_path="config", config_name="mpe")
+def main(cfg: DictConfig):
+    env_name = "simple_spread_v3"
+
+    env = simple_spread_v3.env(
+        N=cfg.agent_num,
+        LN=cfg.landmark_num,
+        local_ratio=0.5,
+        max_cycles=cfg.max_cycle,
+        continuous_actions=False,
+    )
+    validation_env = simple_spread_v3.env(
+        N=cfg.agent_num,
+        LN=cfg.landmark_num,
+        local_ratio=0.5,
+        max_cycles=cfg.max_cycle,
+        continuous_actions=False,
+        render_mode="rgb_array",
+    )
+    test_env = simple_spread_v3.env(
+        N=cfg.agent_num,
+        LN=cfg.landmark_num,
+        local_ratio=0.5,
+        max_cycles=cfg.max_cycle,
+        continuous_actions=False,
+        render_mode="rgb_array",
+    )
+
+    if cfg.lili:
+        agent_type = "lili"
+        cuda_num = 0
+    else:
+        agent_type = "ppo"
+        cuda_num = 1
+
+    name = f"{agent_type}_{cfg.agent_num}agent_{cfg.landmark_num}land"
+
+    if cfg.track:
+        run_name = f"{name}_{now.strftime('%m_%d_%H:%M')}"
+        run = wandb.init(
             project=cfg.project_name,
             sync_tensorboard=True,
             monitor_gym=True,
-            name=self.run_name,
+            name=run_name,
         )
+    else:
+        run = None
 
-        root_dir = os.getcwd()
-        self.recoder = VideoRecorder(root_dir)
+    root_dir = os.getcwd()
+    recoder = VideoRecorder(root_dir)
 
-    def batchify_obs(obs, device):
-        """Converts PZ style observations to batch of torch arrays."""
-        # convert to list of np arrays
-        obs = np.stack([obs[a] for a in obs], axis=0)
-        # transpose to be (batch, channel, height, width)
-        obs = obs.transpose(0, -1, 1, 2)
-        # convert to torch
-        obs = torch.tensor(obs).to(device)
+    device = torch.device("cpu")
 
-        return obs
+    if torch.cuda.is_available():
+        device = torch.device(f"cuda:{cuda_num}")
+        torch.cuda.empty_cache()
 
-    def batchify(x, device):
-        """Converts PZ style returns to batch of torch arrays."""
-        # convert to list of np arrays
-        x = np.stack([x[a] for a in x], axis=0)
-        # convert to torch
-        x = torch.tensor(x).to(device)
+    directory = "models"
+    if not os.path.exists(directory):
+        os.makedirs(directory)
 
-        return x
+    directory = directory + "/" + env_name + "/"
+    if not os.path.exists(directory):
+        os.makedirs(directory)
 
-    def unbatchify(x, env):
-        """Converts np array to PZ style arguments."""
-        x = x.cpu().numpy()
-        x = {a: x[i] for i, a in enumerate(env.possible_agents)}
+    flex_checkpoint_path = directory + f"{name}.pth"
 
-        return x
-
-    def train(self):
-        # TODO: log training video
-        callback = WandbCallback(
-            verbose=3,
-            model_save_path=self.cfg.model_dir,
-            model_save_freq=100,
-        )
-
-        # TODO: log cumulative reward and episode length https://pettingzoo.farama.org/api/utils/
-        env = cooperative_pong_v5.parallel_env(
-            render_mode="rgb_array",
-        )
-        env = ss.color_reduction_v0(env)
-        num_actions = env.action_space(env.possible_agents[0])
-        env = ss.resize_v1(env, x_size=84, y_size=84)
-        env = ss.frame_stack_v1(env, 3)
-        env = ss.pettingzoo_env_to_vec_env_v1(env)
-        env = ss.concat_vec_envs_v1(env, 8, num_cpus=8, base_class="stable_baselines3")
-
-        agent = Agent(num_actions)
-        optimizer = optim.Adam(agent.parameters(), lr=0.001, eps=1e-5)
-        # model = PPO(
-        #     CnnPolicy,
-        #     env,
-        #     verbose=2,
-        #     gamma=self.cfg.gamma,
-        #     n_steps=self.cfg.n_steps,
-        #     ent_coef=self.cfg.ent_coef,
-        #     vf_coef=self.cfg.vf_coef,
-        #     learning_rate=self.cfg.learning_rate,
-        #     max_grad_norm=self.cfg.max_grad_norm,
-        #     gae_lambda=self.cfg.gae_lambda,
-        #     n_epochs=self.cfg.n_epochs,
-        #     clip_range=self.cfg.clip_range,
-        #     batch_size=self.cfg.batch_size,
-        # )
-        # model.learn(total_timesteps=self.cfg.total_timesteps, callback=callback)
-        # model.save(self.model_path)
-
-    def eval(self):
-        model = PPO.load(self.model_path)
-
-        env = cooperative_pong_v5.env(render_mode="rgb_array")
-        env = ss.color_reduction_v0(env)
-        env = ss.resize_v1(env, x_size=84, y_size=84)
-        env = ss.frame_stack_v1(env, 3)
-
-        for eval_episode in range(self.cfg.eval_episodes):
-            self.recoder.init()
-            env.reset()
-            video_path = f"latest_{eval_episode}.mp4"
-            for agent in env.agent_iter():
-                observation, reward, done, truncation, info = env.last()
-
-                if done or truncation:
-                    action = None
-                else:
-                    action = (
-                        model.predict(observation, deterministic=True)[0]
-                        if not done
-                        else None
-                    )
-
-                env.step(action)
-                self.recoder.record(env)
-            self.recoder.save(video_path)
-            self.run.log({"video": wandb.Video(f"video/{video_path}", fps=30)})
-        self.run.finish()
-        env.close()
-
-
-@hydra.main(version_base=None, config_path="config", config_name="pong")
-def main(cfg: DictConfig):
-    workspace = Workspace(cfg)
     if cfg.train:
-        workspace.train()
-    workspace.eval()
+        train(cfg, run, env, validation_env, recoder, device, flex_checkpoint_path)
+    else:
+        test(cfg, run, test_env, recoder, device, directory)
 
 
 if __name__ == "__main__":
