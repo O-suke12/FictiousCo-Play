@@ -10,8 +10,9 @@ from omegaconf import DictConfig
 
 import wandb
 from envs.mpe_fixed_env import simple_spread_v3
-from originalLILI import LILI
-from originPPO import PPO
+from lili import LILI
+from lstm_lili import LILI_LSTM
+from ppo import PPO
 from scripted_agent import ANOTHER_AGENT
 from utils.recoder import VideoRecorder
 
@@ -21,12 +22,19 @@ now = datetime.now(japan_tz)
 
 
 def train(
-    cfg: DictConfig, run, env, validation_env, recoder, device, flex_checkpoint_path
+    cfg: DictConfig,
+    run,
+    env,
+    validation_env,
+    recoder,
+    device,
+    flex_checkpoint_path,
+    agent_type,
 ):
     state_dim = env.observation_space(env.possible_agents[0]).shape[0]
     action_dim = env.action_space(env.possible_agents[0]).n
 
-    if cfg.lili:
+    if agent_type == "lili":
         print(
             "============================================================================================"
         )
@@ -43,7 +51,7 @@ def train(
             run=run,
         )
 
-    else:
+    elif agent_type == "ppo":
         print(
             "============================================================================================"
         )
@@ -58,6 +66,23 @@ def train(
             cfg,
             run=run,
         )
+    else:
+        print(
+            "============================================================================================"
+        )
+        print("Currently using LILI_LSTM")
+        print(
+            "============================================================================================"
+        )
+        flex_agent = LILI_LSTM(
+            state_dim,
+            action_dim,
+            cfg.z_dim,
+            cfg.hidden_dim,
+            device,
+            cfg,
+            run=run,
+        )
 
     another_agent = ANOTHER_AGENT(env, 0.5)
 
@@ -65,9 +90,6 @@ def train(
 
     agents[env.possible_agents[0]] = another_agent
     agents[env.possible_agents[1]] = flex_agent
-
-    if cfg.lili and cfg.load_ed:
-        flex_agent.load_ed(flex_checkpoint_path)
 
     # track total training time
     start_time = now
@@ -94,7 +116,7 @@ def train(
             for agent in env.possible_agents:
                 # select action with policy
                 state, reward, done, truncated, info = env.last()
-                action = agents[agent].select_action(state)
+                action = agents[agent].select_action(state, t)
 
                 # saving reward and is_terminals
                 if agents[agent] == flex_agent:
@@ -140,7 +162,7 @@ def train(
                     print(
                         "--------------------------------------------------------------------------------------------"
                     )
-                    validation(cfg, run, agents, validation_env, recoder)
+                    # validation(cfg, run, agents, validation_env, recoder)
                     agents["another_agent"].change_env(env)
                     agents["another_agent"].set_agent_type(env.world.another_agent_type)
 
@@ -192,7 +214,7 @@ def validation(cfg, run, agents, validation_env, recoder):
         for t in range(1, cfg.max_cycle + 1):
             for agent in validation_env.possible_agents:
                 state, reward, done, truncated, info = validation_env.last()
-                action = agents[agent].just_select_action(state)
+                action = agents[agent].just_select_action(state, t)
 
                 ep_reward += reward
 
@@ -239,6 +261,20 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
     state_dim = test_env.observation_space(test_env.possible_agents[0]).shape[0]
     action_dim = test_env.action_space(test_env.possible_agents[0]).n
 
+    lili_lstm_model_name = f"lili_lstm_{cfg.agent_num}agent_{cfg.landmark_num}land"
+    lili_lstm_check_point = directory + f"{lili_lstm_model_name}.pth"
+    lili_lstm = LILI_LSTM(
+        state_dim,
+        action_dim,
+        cfg.z_dim,
+        cfg.hidden_dim,
+        device,
+        cfg,
+        run=run,
+    )
+    lili_lstm.load(lili_lstm_check_point)
+    lili_lstm.load_ed_lp(lili_lstm_check_point)
+
     lili_model_name = f"lili_{cfg.agent_num}agent_{cfg.landmark_num}land"
     lili_check_point = directory + f"{lili_model_name}.pth"
     lili = LILI(
@@ -264,23 +300,30 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
 
     another_agent = ANOTHER_AGENT(test_env, 0.1)
 
-    flex_types = ["ppo", "lili"]
+    flex_types = ["ppo", "lili", "lili_lstm"]
 
     lili_agents = {}
     ppo_agents = {}
+    lili_lstm_agents = {}
     lili_agents[test_env.possible_agents[0]] = another_agent
     lili_agents[test_env.possible_agents[1]] = lili
     ppo_agents[test_env.possible_agents[0]] = another_agent
     ppo_agents[test_env.possible_agents[1]] = ppo
+    lili_lstm_agents[test_env.possible_agents[0]] = another_agent
+    lili_lstm_agents[test_env.possible_agents[1]] = lili_lstm
+
     test_agents_dict = {}
     test_agents_dict["ppo"] = ppo_agents
     test_agents_dict["lili"] = lili_agents
+    test_agents_dict["lili_lstm"] = lili_lstm_agents
 
     ppo_results = {}
     lili_results = {}
+    lili_lstm_results = {}
     results = {}
     results["ppo"] = ppo_results
     results["lili"] = lili_results
+    results["lili_lstm"] = lili_lstm_results
 
     seeds = np.random.randint(0, 1001, 5).tolist()
     for flex_type in flex_types:
@@ -299,7 +342,10 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
                 for t in range(1, cfg.max_cycle + 2):
                     for agent in test_env.possible_agents:
                         state, reward, done, truncated, info = test_env.last()
-                        action = test_agents[agent].just_select_action(state)
+                        action = test_agents[agent].select_action(state, t)
+                        if agent == "flex_agent":
+                            test_agents[agent].buffer.rewards.append(reward)
+                            test_agents[agent].buffer.is_terminals.append(done)
 
                         ep_reward += reward
 
@@ -327,17 +373,25 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
     x = range(len(labels))
 
     fig, ax = plt.subplots()
-    ax.bar(x, results[flex_types[0]].values(), width=0.4, label=flex_types[0])
+    ax.bar(x, results[flex_types[0]].values(), width=0.3, label=flex_types[0])
     ax.bar(
-        [i + 0.4 for i in x],
+        [i + 0.3 for i in x],
         results[flex_types[1]].values(),
-        width=0.4,
+        width=0.3,
         label=flex_types[1],
+    )
+    ax.bar(
+        [i + 0.6 for i in x],
+        results[flex_types[2]].values(),
+        width=0.3,
+        label=flex_types[2],
     )
 
     ax.set_xlabel("Another Agent Type")
     ax.set_ylabel("Average Reward")
-    ax.set_title(f"Comparison of {flex_types[0]} and {flex_types[1]}")
+    ax.set_title(
+        f"Comparison of {flex_types[0]} and {flex_types[1]} and {flex_types[2]}"
+    )
     ax.set_xticks([i + 0.2 for i in x])
     ax.set_xticklabels(labels)
     ax.legend()
@@ -382,14 +436,17 @@ def main(cfg: DictConfig):
         render_mode="rgb_array",
     )
 
-    if cfg.lili:
-        agent_type = "lili"
+    agent_type = ["ppo", "lili", "lili_lstm"][cfg.model_number]
+
+    if agent_type == "ppo" or agent_type == "lili":
         cuda_num = 0
     else:
-        agent_type = "ppo"
         cuda_num = 1
 
-    name = f"{agent_type}_{cfg.agent_num}agent_{cfg.landmark_num}land"
+    if cfg.train:
+        name = f"{agent_type}_{cfg.agent_num}agent_{cfg.landmark_num}land"
+    else:
+        name = f"test_{cfg.agent_num}agent_{cfg.landmark_num}land_test"
 
     if cfg.track:
         run_name = f"{name}_{now.strftime('%m_%d_%H:%M')}"
@@ -422,7 +479,16 @@ def main(cfg: DictConfig):
     flex_checkpoint_path = directory + f"{name}.pth"
 
     if cfg.train:
-        train(cfg, run, env, validation_env, recoder, device, flex_checkpoint_path)
+        train(
+            cfg,
+            run,
+            env,
+            validation_env,
+            recoder,
+            device,
+            flex_checkpoint_path,
+            agent_type,
+        )
     else:
         test(cfg, run, test_env, recoder, device, directory)
 
