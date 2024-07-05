@@ -7,7 +7,7 @@ import pytz
 import torch
 from matplotlib import pyplot as plt
 from omegaconf import DictConfig
-from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
 
 import wandb
 from envs.mpe_fixed_env import simple_spread_v3
@@ -344,7 +344,7 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
     latents = {}
     for another_type in test_env.world.another_agent_type_list:
         latents[another_type] = np.empty((0, 5))
-    tsne = TSNE(n_components=2, random_state=0)
+    pca = PCA(n_components=2)
 
     seeds = np.random.randint(0, 1001, cfg.test_episode_num).tolist()
     for flex_type in flex_types:
@@ -378,7 +378,7 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
                             if info != {}:
                                 ep_position_reward += info["position_reward"]
                                 ep_collision_reward += info["collision_reward"]
-                            if flex_type == "lili_lstm" and i == 0:
+                            if flex_type == "lili_lstm" and t > 95:
                                 latent = test_agents[agent].hidden[1].cpu().numpy()
                                 latents[another_type] = np.concatenate(
                                     (latents[another_type], latent), 0
@@ -422,7 +422,7 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
 
     all_latents = np.concatenate(list(latents.values()))
     labels = np.repeat(list(latents.keys()), [len(arr) for arr in latents.values()])
-    all_latents_2d = tsne.fit_transform(all_latents)
+    all_latents_2d = pca.fit_transform(all_latents)
     unique_labels = list(latents.keys())
     colors = plt.cm.get_cmap("tab10", len(unique_labels))
     for i, label in enumerate(unique_labels):

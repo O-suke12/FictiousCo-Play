@@ -85,11 +85,13 @@ class Latent_Predictor(nn.Module):
         self.hidden_dim = hidden_dim
         self.lstm = nn.LSTM(lp_input_dim, self.hidden_dim, batch_first=True)
         self.state_layer = nn.Linear(self.hidden_dim, state_dim)
+        self.reward_layer = nn.Linear(self.hidden_dim, 1)
 
     def forward(self, tau, hidden):
         output, hidden = self.lstm(tau, hidden)
         next_state = self.state_layer(output)
-        return next_state, hidden
+        next_reward = self.reward_layer(output)
+        return next_state, next_reward, hidden
 
 
 class LILI_LSTM:
@@ -161,15 +163,14 @@ class LILI_LSTM:
                 tau = torch.zeros((self.lp_input_dim)).unsqueeze(0)
                 self.hidden = None
 
-            _, self.hidden = self.latent_predictor(tau, self.hidden)
+            _, _, self.hidden = self.latent_predictor(tau, self.hidden)
             cell_state = self.hidden[1][0].detach().numpy()
             state_hidden = np.concatenate((state, cell_state))
             state = torch.FloatTensor(state_hidden).to(self.device)
             action, action_logprob, state_val = self.policy_old.act(state)
 
         self.buffer.tau.append(tau)
-        # self.buffer.predicted_states.append(next_state)
-        # self.buffer.predicted_rewards.append(next_reward)
+
         self.buffer.state_all.append(state)
         self.buffer.states.append(state[: self.state_dim])
         self.buffer.actions.append(action)
@@ -269,13 +270,15 @@ class LILI_LSTM:
 
             self.hidden = None
             predicted_states = []
+            predicted_rewards = []
             for tau in taus:
-                predicted_state, self.hidden = self.latent_predictor(
+                predicted_state, predicted_reward, self.hidden = self.latent_predictor(
                     tau.unsqueeze(0), self.hidden
                 )
                 if tau[-1] == 1:
                     self.hidden = None
                 predicted_states.append(predicted_state.squeeze(0))
+                predicted_rewards.append(predicted_reward.squeeze(0))
 
             # cut first state of each episode
             mask = torch.ones_like(old_states)
@@ -293,6 +296,19 @@ class LILI_LSTM:
 
             state_loss = self.lp_state_loss(predicted_states, states)
 
+            mask = torch.ones_like(rewards)
+            mask[:: self.cfg.max_cycle + 1] = 0
+            mask = mask.bool()
+            old_rewards = torch.masked_select(rewards, mask).view(-1, 1)
+
+            predicted_rewards = torch.stack(predicted_rewards)
+            mask = torch.ones_like(predicted_rewards)
+            mask[self.cfg.max_cycle :: self.cfg.max_cycle + 1] = 0
+            mask = mask.bool()
+            predicted_rewards = torch.masked_select(predicted_rewards, mask).view(-1, 1)
+
+            reward_loss = self.lp_reward_loss(predicted_rewards, old_rewards)
+
             # mask = torch.ones_like(rewards)
             # mask[:: self.cfg.max_cycle + 1] = 0
             # mask = mask.bool()
@@ -305,8 +321,7 @@ class LILI_LSTM:
             # predicted_rewards = torch.masked_select(predicted_rewards, mask).view(-1, 1)
 
             # reward_loss = self.lp_reward_loss(predicted_rewards, old_rewards)
-
-            lstm_loss = state_loss
+            lstm_loss = state_loss + reward_loss
 
             self.optimizer.zero_grad()
             loss.mean().backward()

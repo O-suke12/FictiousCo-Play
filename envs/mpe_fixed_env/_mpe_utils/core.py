@@ -89,6 +89,12 @@ class World:  # multi-agent world
         self.fixed_landmark_no = None
         self.extra_reward_function = None
         self.another_agent_type = None
+        self.num_landmarks = None
+        self.another_agent_type_list = [
+            "fixed",
+            "following",
+            "circle",
+        ]
         # communication channel dimensionality
         self.dim_c = 0
         # position dimensionality

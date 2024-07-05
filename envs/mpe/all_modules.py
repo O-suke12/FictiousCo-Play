@@ -1,4 +1,4 @@
-from lili_ppo import (
+from stock.lili_ppo import (
     simple_spread_v3,
     simple_v3,
 )
