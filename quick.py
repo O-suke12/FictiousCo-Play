@@ -1,9 +1,9 @@
 import os
 
-from envs.mpe_fixed_env import simple_adversary_v3
+from envs.mpe_fixed_env import simple_spread_v3
 from utils.recoder import VideoRecorder
 
-env = simple_adversary_v3.env(
+env = simple_spread_v3.env(
     N=1,
     max_cycles=120,
     continuous_actions=False,

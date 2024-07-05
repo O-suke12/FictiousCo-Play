@@ -31,20 +31,20 @@ class ActorCritic(nn.Module):
         super(ActorCritic, self).__init__()
 
         self.actor = nn.Sequential(
-            nn.Linear(state_dim, 64),
+            nn.Linear(state_dim, 16),
             nn.Tanh(),
-            nn.Linear(64, 64),
+            nn.Linear(16, 8),
             nn.Tanh(),
-            nn.Linear(64, action_dim),
+            nn.Linear(8, action_dim),
             nn.Softmax(dim=-1),
         )
         # critic
         self.critic = nn.Sequential(
-            nn.Linear(state_dim, 64),
+            nn.Linear(state_dim, 16),
             nn.Tanh(),
-            nn.Linear(64, 64),
+            nn.Linear(16, 8),
             nn.Tanh(),
-            nn.Linear(64, 1),
+            nn.Linear(8, 1),
         )
 
     def forward(self):
@@ -99,7 +99,7 @@ class PPO:
 
         self.MseLoss = nn.MSELoss()
 
-    def select_action(self, state, t):
+    def select_action(self, state, t, done):
         with torch.no_grad():
             state = torch.FloatTensor(state).to(self.device)
             action, action_logprob, state_val = self.policy_old.act(state)

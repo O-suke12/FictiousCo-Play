@@ -7,6 +7,7 @@ import pytz
 import torch
 from matplotlib import pyplot as plt
 from omegaconf import DictConfig
+from sklearn.manifold import TSNE
 
 import wandb
 from envs.mpe_fixed_env import simple_spread_v3
@@ -77,14 +78,13 @@ def train(
         flex_agent = LILI_LSTM(
             state_dim,
             action_dim,
-            cfg.z_dim,
             cfg.hidden_dim,
             device,
             cfg,
             run=run,
         )
 
-    another_agent = ANOTHER_AGENT(env, 0.5)
+    another_agent = ANOTHER_AGENT(env, 0.1)
 
     agents = {}
 
@@ -112,11 +112,12 @@ def train(
         current_ep_reward = 0
         another_agent.set_agent_type(env.world.another_agent_type)
 
-        for t in range(1, cfg.max_cycle + 1):
+        for t in range(1, cfg.max_cycle + 2):
             for agent in env.possible_agents:
                 # select action with policy
                 state, reward, done, truncated, info = env.last()
-                action = agents[agent].select_action(state, t)
+                end = done or truncated
+                action = agents[agent].select_action(state, t, end)
 
                 # saving reward and is_terminals
                 if agents[agent] == flex_agent:
@@ -266,14 +267,13 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
     lili_lstm = LILI_LSTM(
         state_dim,
         action_dim,
-        cfg.z_dim,
         cfg.hidden_dim,
         device,
         cfg,
         run=run,
     )
     lili_lstm.load(lili_lstm_check_point)
-    lili_lstm.load_ed_lp(lili_lstm_check_point)
+    lili_lstm.load_lp(lili_lstm_check_point)
 
     lili_model_name = f"lili_{cfg.agent_num}agent_{cfg.landmark_num}land"
     lili_check_point = directory + f"{lili_model_name}.pth"
@@ -298,7 +298,7 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
     lili.load_ed(lili_check_point)
     ppo.load(ppo_check_point)
 
-    another_agent = ANOTHER_AGENT(test_env, 0.1)
+    another_agent = ANOTHER_AGENT(test_env, 0.0)
 
     flex_types = ["ppo", "lili", "lili_lstm"]
 
@@ -325,41 +325,79 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
     results["lili"] = lili_results
     results["lili_lstm"] = lili_lstm_results
 
-    seeds = np.random.randint(0, 1001, 5).tolist()
+    ppo_collision = {}
+    lili_collision = {}
+    lili_lstm_collision = {}
+    collision_results = {}
+    collision_results["ppo"] = ppo_collision
+    collision_results["lili"] = lili_collision
+    collision_results["lili_lstm"] = lili_lstm_collision
+
+    ppo_position = {}
+    lili_position = {}
+    lili_lstm_position = {}
+    position_results = {}
+    position_results["ppo"] = ppo_position
+    position_results["lili"] = lili_position
+    position_results["lili_lstm"] = lili_lstm_position
+
+    latents = {}
+    for another_type in test_env.world.another_agent_type_list:
+        latents[another_type] = np.empty((0, 5))
+    tsne = TSNE(n_components=2, random_state=0)
+
+    seeds = np.random.randint(0, 1001, cfg.test_episode_num).tolist()
     for flex_type in flex_types:
         test_agents = test_agents_dict[flex_type]
         for another_type in test_env.world.another_agent_type_list:
             each_agent_reward = 0
+            each_agent_collision_reward = 0
+            each_agent_position_reward = 0
             for i in range(cfg.test_episode_num):
                 ep_reward = 0
-                test_env.reset(seeds[i])
+                test_env.reset(
+                    seeds[i], options={"agent_type": another_type, "seed": seeds[i]}
+                )
                 test_agents["another_agent"].change_env(test_env)
                 test_agents["another_agent"].set_agent_type(
                     test_env.world.another_agent_type
                 )
                 recoder.init()
                 ep_reward = 0
+                ep_collision_reward = 0
+                ep_position_reward = 0
                 for t in range(1, cfg.max_cycle + 2):
                     for agent in test_env.possible_agents:
                         state, reward, done, truncated, info = test_env.last()
-                        action = test_agents[agent].select_action(state, t)
+                        end = done or truncated
+                        action = test_agents[agent].select_action(state, t, end)
                         if agent == "flex_agent":
                             test_agents[agent].buffer.rewards.append(reward)
                             test_agents[agent].buffer.is_terminals.append(done)
+                            ep_reward += reward
+                            if info != {}:
+                                ep_position_reward += info["position_reward"]
+                                ep_collision_reward += info["collision_reward"]
+                            if flex_type == "lili_lstm" and i == 0:
+                                latent = test_agents[agent].hidden[1].cpu().numpy()
+                                latents[another_type] = np.concatenate(
+                                    (latents[another_type], latent), 0
+                                )
 
-                        ep_reward += reward
-
-                        recoder.record(test_env)
+                        if i < 3:
+                            recoder.record(test_env)
                         if done or truncated:
                             action = None
                         test_env.step(action)
                     if done or truncated:
                         break
 
-                video_name = f"test_{flex_type}_{i}.mp4"
+                video_name = f"test_{flex_type}_{another_type}_{i}.mp4"
                 recoder.save(video_name)
                 each_agent_reward += ep_reward
-                if cfg.track:
+                each_agent_collision_reward += ep_collision_reward
+                each_agent_position_reward += ep_position_reward
+                if i < 3 and cfg.track:
                     run.log(
                         {
                             "test_video": wandb.Video(
@@ -368,36 +406,71 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
                         }
                     )
             results[flex_type][another_type] = each_agent_reward / cfg.test_episode_num
+            collision_results[flex_type][another_type] = (
+                each_agent_collision_reward / cfg.test_episode_num
+            )
+            position_results[flex_type][another_type] = (
+                each_agent_position_reward / cfg.test_episode_num
+            )
 
-    labels = results[flex_types[0]].keys()
-    x = range(len(labels))
+    result_types = ["total_results", "collision_results", "position_results"]
+    all_results = {
+        "total_results": results,
+        "collision_results": collision_results,
+        "position_results": position_results,
+    }
 
-    fig, ax = plt.subplots()
-    ax.bar(x, results[flex_types[0]].values(), width=0.3, label=flex_types[0])
-    ax.bar(
-        [i + 0.3 for i in x],
-        results[flex_types[1]].values(),
-        width=0.3,
-        label=flex_types[1],
-    )
-    ax.bar(
-        [i + 0.6 for i in x],
-        results[flex_types[2]].values(),
-        width=0.3,
-        label=flex_types[2],
-    )
+    all_latents = np.concatenate(list(latents.values()))
+    labels = np.repeat(list(latents.keys()), [len(arr) for arr in latents.values()])
+    all_latents_2d = tsne.fit_transform(all_latents)
+    unique_labels = list(latents.keys())
+    colors = plt.cm.get_cmap("tab10", len(unique_labels))
+    for i, label in enumerate(unique_labels):
+        indices = np.where(labels == label)
+        plt.scatter(
+            all_latents_2d[indices, 0],
+            all_latents_2d[indices, 1],
+            c=colors(i),
+            label=label,
+        )
+    plt.legend()
+    plt.savefig("tsne.png")
 
-    ax.set_xlabel("Another Agent Type")
-    ax.set_ylabel("Average Reward")
-    ax.set_title(
-        f"Comparison of {flex_types[0]} and {flex_types[1]} and {flex_types[2]}"
-    )
-    ax.set_xticks([i + 0.2 for i in x])
-    ax.set_xticklabels(labels)
-    ax.legend()
-    fig.savefig("comparison.png")
-    if cfg.track:
-        run.log({"test_results": wandb.Image("comparison.png")})
+    for result_type in result_types:
+        labels = all_results[result_type][flex_types[0]].keys()
+        x = range(len(labels))
+
+        fig, ax = plt.subplots()
+        ax.bar(
+            x,
+            all_results[result_type][flex_types[0]].values(),
+            width=0.3,
+            label=flex_types[0],
+        )
+        ax.bar(
+            [i + 0.3 for i in x],
+            all_results[result_type][flex_types[1]].values(),
+            width=0.3,
+            label=flex_types[1],
+        )
+        ax.bar(
+            [i + 0.6 for i in x],
+            all_results[result_type][flex_types[2]].values(),
+            width=0.3,
+            label=flex_types[2],
+        )
+
+        ax.set_xlabel("Another Agent Type")
+        ax.set_ylabel("Average Reward")
+        ax.set_title(
+            f"{result_type}_comparison of {flex_types[0]} and {flex_types[1]} and {flex_types[2]}"
+        )
+        ax.set_xticks([i + 0.2 for i in x])
+        ax.set_xticklabels(labels)
+        ax.legend()
+        fig.savefig(f"{result_type}_comparison.png")
+        if cfg.track:
+            run.log({"test_results": wandb.Image(f"{result_type}_comparison.png")})
 
     print(
         "============================================================================================"

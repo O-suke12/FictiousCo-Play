@@ -28,7 +28,7 @@ class ANOTHER_AGENT:
         else:
             self.random_prob = 0.1
 
-    def select_action(self, state, t):
+    def select_action(self, state, t, end):
         if random.random() < self.random_prob:
             return np.random.choice(5, size=1, p=[0.2, 0.2, 0.2, 0.2, 0.2])[0]
 
@@ -51,8 +51,8 @@ class ANOTHER_AGENT:
         else:
             return 4 if object_relpos[1] > 0 else 3  # move_up or move_down
 
-    def just_select_action(self, state, t):
-        return self.select_action(state, t)
+    def just_select_action(self, state, t, end):
+        return self.select_action(state, t, end)
 
     def change_env(self, env):
         self.env = env

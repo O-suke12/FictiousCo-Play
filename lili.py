@@ -202,7 +202,7 @@ class LILI:
         )
         return tau
 
-    def select_action(self, state, t):
+    def select_action(self, state, t, done):
         with torch.no_grad():
             if t > 1:
                 tau = self.make_one_tau(state)
@@ -324,14 +324,7 @@ class LILI:
             state_loss = -state_dist.log_prob(old_states).mean()
             reward_loss = -reward_dist.log_prob(rewards).mean()
             J_rep = state_loss + reward_loss
-            # encoder_loss = critique_loss - J_rep
 
-            # self.encoder_optimizer.zero_grad()
-            # encoder_loss.backward()
-            # self.encoder_optimizer.step()
-
-            # self.coder_optimizer.zero_grad()
-            # J_rep.backward()
             # self.ed_optimizer.step()
 
             self.ed_optimizer.zero_grad()
