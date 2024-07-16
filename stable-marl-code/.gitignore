@@ -1,0 +1,4 @@
+*.pyc
+*.sh
+ray_results/*
+softlearning-ctrl/ray_results/*
