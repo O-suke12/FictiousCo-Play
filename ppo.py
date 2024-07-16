@@ -12,6 +12,7 @@ class RolloutBuffer:
         self.rewards = []
         self.state_values = []
         self.is_terminals = []
+        self.another_actions = []
 
     def clear(self):
         del self.actions[:]
@@ -20,6 +21,7 @@ class RolloutBuffer:
         del self.rewards[:]
         del self.state_values[:]
         del self.is_terminals[:]
+        del self.another_actions[:]
 
 
 class ActorCritic(nn.Module):

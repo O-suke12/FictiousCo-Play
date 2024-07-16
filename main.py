@@ -114,39 +114,61 @@ def train(
 
         for t in range(1, cfg.max_cycle + 2):
             for agent in env.possible_agents:
-                # select action with policy
                 state, reward, done, truncated, info = env.last()
-                end = done or truncated
-                action = agents[agent].select_action(state, t, end)
+                if agent == "flex_agent":
+                    env.action_space(agent).sample()
+                    agents["flex_agent"].buffer.states.append(torch.tensor(state))
+                    if t > 2:
+                        tau = agents["flex_agent"].make_one_tau(
+                            state, done or truncated
+                        )
+                    else:
+                        tau = torch.zeros(
+                            (agents["flex_agent"].encoder_input_dim)
+                        ).unsqueeze(0)
+                    agents["flex_agent"].buffer.taus.append(tau)
 
-                # saving reward and is_terminals
-                if agents[agent] == flex_agent:
-                    agents[agent].buffer.rewards.append(reward)
-                    agents[agent].buffer.is_terminals.append(done)
+                else:
+                    action = agents[agent].select_action(state, 0, truncated)
+                    agents["flex_agent"].buffer.another_actions.append(
+                        torch.tensor(action)
+                    )
+
+                # state, reward, done, truncated, info = env.last()
+                # end = done or truncated
+                # action = agents[agent].select_action(state, t, end)
+
+                # if agents[agent] == flex_agent:
+                #     agents[agent].buffer.rewards.append(reward)
+                #     agents[agent].buffer.is_terminals.append(done)
+                # else:
+                #     agents["flex_agent"].buffer.another_actions.append(
+                #         torch.tensor(action)
+                #     )
 
                 time_step += 1
                 current_ep_reward += reward
 
                 # printing average reward
-                if time_step % cfg.print_freq == 0:
-                    # print average reward till last episode
-                    print_avg_reward = print_running_reward / print_running_episodes
-                    print_avg_reward = round(print_avg_reward, 2)
+                # if time_step % cfg.print_freq == 0:
+                #     # print average reward till last episode
+                #     print_avg_reward = print_running_reward / print_running_episodes
+                #     print_avg_reward = round(print_avg_reward, 2)
 
-                    print(
-                        "Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(
-                            i_episode, time_step, print_avg_reward
-                        )
-                    )
+                #     print(
+                #         "Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(
+                #             i_episode, time_step, print_avg_reward
+                #         )
+                #     )
 
-                    print_running_reward = 0
-                    print_running_episodes = 0
-                    if cfg.track:
-                        run.log(
-                            {
-                                "average_reward": print_avg_reward,
-                            }
-                        )
+                #     print_running_reward = 0
+                #     print_running_episodes = 0
+                #     if cfg.track:
+                #         run.log(
+                #             {
+                #                 "average_reward": print_avg_reward,
+                #             }
+                #         )
 
                 # save model weights
                 if time_step % cfg.save_model_freq == 0:
@@ -273,7 +295,7 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
         run=run,
     )
     lili_lstm.load(lili_lstm_check_point)
-    lili_lstm.load_lp(lili_lstm_check_point)
+    lili_lstm.load_ed(lili_lstm_check_point)
 
     lili_model_name = f"lili_{cfg.agent_num}agent_{cfg.landmark_num}land"
     lili_check_point = directory + f"{lili_model_name}.pth"
@@ -300,7 +322,11 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
 
     another_agent = ANOTHER_AGENT(test_env, 0.0)
 
-    flex_types = ["ppo", "lili", "lili_lstm"]
+    flex_types = [
+        "ppo",
+        "lili",
+        "lili_lstm",
+    ]
 
     lili_agents = {}
     ppo_agents = {}
@@ -343,8 +369,8 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
 
     latents = {}
     for another_type in test_env.world.another_agent_type_list:
-        latents[another_type] = np.empty((0, 5))
-    pca = PCA(n_components=2)
+        latents[another_type] = np.empty((0, 8))
+    pca = PCA(n_components=3)
 
     seeds = np.random.randint(0, 1001, cfg.test_episode_num).tolist()
     for flex_type in flex_types:
@@ -378,10 +404,10 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
                             if info != {}:
                                 ep_position_reward += info["position_reward"]
                                 ep_collision_reward += info["collision_reward"]
-                            if flex_type == "lili_lstm" and t > 95:
-                                latent = test_agents[agent].hidden[1].cpu().numpy()
+                            if flex_type == "lili_lstm" and t > 100:
+                                latent = test_agents[agent].buffer.latents[-1]
                                 latents[another_type] = np.concatenate(
-                                    (latents[another_type], latent), 0
+                                    (latents[another_type], latent.reshape(1, -1)), 0
                                 )
 
                         if i < 3:
@@ -434,7 +460,7 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
             label=label,
         )
     plt.legend()
-    plt.savefig("tsne.png")
+    plt.savefig("latent_dim.png")
 
     for result_type in result_types:
         labels = all_results[result_type][flex_types[0]].keys()

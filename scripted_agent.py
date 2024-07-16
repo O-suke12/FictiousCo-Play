@@ -46,6 +46,18 @@ class ANOTHER_AGENT:
         else:
             raise ValueError("Unknown agent type")
 
+        # if self.agent_type == "right_up":
+        #     return random.choice([2, 4])
+        # elif self.agent_type == "left_down":
+        #     return random.choice([1, 3])
+        # elif self.agent_type == "right_down":
+        #     return random.choice([2, 3])
+        # elif self.agent_type == "left_up":
+        #     return random.choice([1, 4])
+        # elif self.agent_type == "nothing":
+        #     return 0
+        # else:
+        #     raise ValueError("Unknown agent type")
         if abs(object_relpos[0]) > abs(object_relpos[1]):
             return 2 if object_relpos[0] > 0 else 1  # move_right or move_left
         else:
