@@ -109,18 +109,22 @@ class Scenario(BaseScenario):
         world.dim_c = 2
         num_agents = N
         num_landmarks = LN
-        world.another_agent_type = another_agent_type
+        world.num_landmarks = LN
+        world.another_agent_type = random.choice(world.another_agent_type_list)
 
-        if another_agent_type is None:
-            world.extra_reward_function = None
-        elif another_agent_type == "fixed" or another_agent_type == "fixed_dynamics":
-            world.extra_reward_function = self.fixed_reward
-        elif another_agent_type == "following":
-            world.extra_reward_function = self.following_reward
-        else:
-            raise ValueError(
-                "another_agent_type must be None, 'fixed', 'fixed_dynamics', or 'following'"
-            )
+        # if world.another_agent_type is None or world.another_agent_type == "cirle":
+        #     world.extra_reward_function = None
+        # elif (
+        #     world.another_agent_type == "fixed"
+        #     or world.another_agent_type == "fixed_dynamics"
+        # ):
+        #     world.extra_reward_function = self.fixed_reward
+        # elif world.another_agent_type == "following":
+        #     world.extra_reward_function = self.following_reward
+        # else:
+        #     raise ValueError(
+        #         "another_agent_type must be None, 'fixed', 'fixed_dynamics', or 'following'"
+        #     )
 
         world.collaborative = True
         # add agents
@@ -148,7 +152,9 @@ class Scenario(BaseScenario):
             landmark.movable = False
         return world
 
-    def reset_world(self, world, np_random):
+    def reset_world(self, world, np_random, options):
+        if options is not None:
+            random.seed(options["seed"])
         # random properties for agents
         for i, agent in enumerate(world.agents):
             agent.color = np.array([0.35, 0.35, 0.85])
@@ -163,6 +169,24 @@ class Scenario(BaseScenario):
         for i, landmark in enumerate(world.landmarks):
             landmark.state.p_pos = np_random.uniform(-1, +1, world.dim_p)
             landmark.state.p_vel = np.zeros(world.dim_p)
+
+        if options is None:
+            world.another_agent_type = random.choice(world.another_agent_type_list)
+        else:
+            world.another_agent_type = options["agent_type"]
+
+        if (
+            world.another_agent_type == "fixed_dynamics"
+            or world.another_agent_type == "fixed"
+        ):
+            world.fixed_landmark_no = random.randrange(world.num_landmarks)
+        else:
+            world.fixed_landmark_no = None
+        for i, landmark in enumerate(world.landmarks):
+            if i == world.fixed_landmark_no:
+                landmark.name = "fixed_landmark"
+            else:
+                landmark.name = "landmark %d" % i
 
     def benchmark_data(self, agent, world):
         rew = 0
@@ -229,14 +253,14 @@ class Scenario(BaseScenario):
 
     def observation(self, agent, world):
         # get positions of all entities in this agent's reference frame
-        fixed_landmark = []
-        if world.fixed_landmark_no is not None:
-            if agent.name == "flex_agent":
-                fixed_landmark.append(np.array([0]))
-            else:
-                fixed_landmark.append(np.array([world.fixed_landmark_no]))
-        else:
-            pass
+        # fixed_landmark = []
+        # if world.fixed_landmark_no is not None:
+        #     if agent.name == "flex_agent":
+        #         fixed_landmark.append(np.array([0]))
+        #     else:
+        #         fixed_landmark.append(np.array([world.fixed_landmark_no]))
+        # else:
+        #     pass
 
         entity_pos = []
         for entity in world.landmarks:  # world.entities:
@@ -250,10 +274,5 @@ class Scenario(BaseScenario):
             comm.append(other.state.c)
             other_pos.append(other.state.p_pos - agent.state.p_pos)
         return np.concatenate(
-            [agent.state.p_vel]
-            + [agent.state.p_pos]
-            + entity_pos
-            + other_pos
-            + comm
-            + fixed_landmark
+            [agent.state.p_vel] + [agent.state.p_pos] + entity_pos + other_pos + comm
         )

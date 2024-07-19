@@ -14,7 +14,7 @@ def make_dir(*path_parts):
 
 
 class VideoRecorder(object):
-    def __init__(self, root_dir, height=304, width=304, camera_id=0, fps=30):
+    def __init__(self, root_dir, height=304, width=304, camera_id=0, fps=24):
         self.save_dir = make_dir(root_dir, "video") if root_dir else None
         self.height = height
         self.width = width
@@ -36,4 +36,4 @@ class VideoRecorder(object):
     def save(self, file_name):
         if self.enabled:
             path = os.path.join(self.save_dir, file_name)
-            imageio.mimsave(path, self.frames, fps=self.fps)
+            imageio.mimsave(path, self.frames, fps=self.fps, macro_block_size=None)

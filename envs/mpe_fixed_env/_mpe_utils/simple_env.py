@@ -69,7 +69,7 @@ class SimpleEnv(AECEnv):
         self.continuous_actions = continuous_actions
         self.local_ratio = local_ratio
 
-        self.scenario.reset_world(self.world, self.np_random)
+        self.scenario.reset_world(self.world, self.np_random, options=None)
 
         self.agents = [agent.name for agent in self.world.agents]
         for agent in self.world.agents:
@@ -81,6 +81,10 @@ class SimpleEnv(AECEnv):
         self.change_steps = random.randint(
             (max_cycles / 2) - max_cycles / 10, (max_cycles / 2) + max_cycles / 10
         )
+        self.change_steps = random.randint(
+            (max_cycles / 2) - max_cycles / 10, (max_cycles / 2) + max_cycles / 10
+        )
+
         self.possible_agents = self.agents[:]
         self._index_map = {
             agent.name: idx for idx, agent in enumerate(self.world.agents)
@@ -157,7 +161,7 @@ class SimpleEnv(AECEnv):
     def reset(self, seed=None, options=None):
         if seed is not None:
             self._seed(seed=seed)
-        self.scenario.reset_world(self.world, self.np_random)
+        self.scenario.reset_world(self.world, self.np_random, options)
 
         self.agents = self.possible_agents[:]
         self.rewards = {name: 0.0 for name in self.agents}
@@ -197,23 +201,16 @@ class SimpleEnv(AECEnv):
         for agent in self.world.agents:
             agent_reward = float(self.scenario.reward(agent, self.world))
             if self.local_ratio is not None:
-                if (
-                    agent == self.another_agent
-                    and self.extra_reward_function is not None
-                ):
-                    # reward += self.extra_reward_function(agent, world=self.world)
-                    reward = (
-                        global_reward * (1 - self.local_ratio)
-                        + self.extra_reward_function(agent, world=self.world)
-                        * self.local_ratio
-                    )
-                else:
-                    reward = (
-                        global_reward * (1 - self.local_ratio)
-                        + agent_reward * self.local_ratio
-                    )
+                reward = (
+                    global_reward * (1 - self.local_ratio)
+                    + agent_reward * self.local_ratio
+                )
             else:
                 reward = agent_reward
+            self.infos[agent.name] = {
+                "position_reward": global_reward,
+                "collision_reward": agent_reward,
+            }
             self.rewards[agent.name] = reward
 
     # set env action for a particular agent
@@ -317,6 +314,16 @@ class SimpleEnv(AECEnv):
     def draw(self):
         # clear screen
         self.screen.fill((255, 255, 255))
+        # pygame.font モジュールを初期化
+        pygame.font.init()
+        # フォントオブジェクトの作成。None はデフォルトフォントを使用することを意味し、30 はフォントサイズです。
+        font = pygame.font.Font(None, 50)
+        # テキストをレンダリングして Surface オブジェクトを取得
+        text_surface = font.render(
+            self.world.another_agent_type, True, (255, 165, 0)
+        )  # RGBでオレンジ色を指定
+        # Surface オブジェクトを画面に描画
+        self.screen.blit(text_surface, (50, 30))
 
         # update bounds to center around agent
         all_poses = [entity.state.p_pos for entity in self.world.entities]
@@ -336,6 +343,7 @@ class SimpleEnv(AECEnv):
             y = (y / cam_range) * self.height // 2 * 0.9
             x += self.width // 2
             y += self.height // 2
+
             if entity == self.another_agent:
                 pygame.draw.circle(self.screen, (0, 255, 0), (x, y), entity.size * 350)
             elif (
