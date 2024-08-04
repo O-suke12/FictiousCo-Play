@@ -185,6 +185,7 @@ class LILI_LSTM:
                 {"params": self.decoder.parameters(), "lr": 0.01},
             ]
         )
+        self.ed_pretrain = 0
 
     def arrange_state(self, state):
         arranged_state = []
@@ -235,7 +236,7 @@ class LILI_LSTM:
             if t > 2:
                 tau = self.make_one_tau(state, end)
             else:
-                tau = torch.zeros((self.encoder_input_dim)).unsqueeze(0)
+                tau = torch.zeros((self.encoder_input_dim)).unsqueeze(0).to(self.device)
                 self.hidden = None
 
             latent, self.hidden = self.encoder(tau, self.hidden)
@@ -243,8 +244,10 @@ class LILI_LSTM:
             # cell_state = self.hidden[1][0].detach().numpy()
 
             # state_hidden = np.concatenate((state, cell_state))
-            self.buffer.latents.append(latent.squeeze().detach().numpy())
-            state_latent = np.concatenate((state, latent.squeeze().detach().numpy()))
+            self.buffer.latents.append(latent.squeeze().detach().cpu().numpy())
+            state_latent = np.concatenate(
+                (state, latent.squeeze().detach().cpu().numpy())
+            )
             state = torch.FloatTensor(state_latent).to(self.device)
             action, action_logprob, state_val = self.policy_old.act(state)
 
@@ -276,19 +279,19 @@ class LILI_LSTM:
 
     def update(self):
         # Monte Carlo estimate of returns
-        # rewards = []
-        # discounted_reward = 0
-        # for reward, is_terminal in zip(
-        #     reversed(self.buffer.rewards), reversed(self.buffer.is_terminals)
-        # ):
-        #     if is_terminal:
-        #         discounted_reward = 0
-        #     discounted_reward = reward + (self.gamma * discounted_reward)
-        #     rewards.insert(0, discounted_reward)
+        rewards = []
+        discounted_reward = 0
+        for reward, is_terminal in zip(
+            reversed(self.buffer.rewards), reversed(self.buffer.is_terminals)
+        ):
+            if is_terminal:
+                discounted_reward = 0
+            discounted_reward = reward + (self.gamma * discounted_reward)
+            rewards.insert(0, discounted_reward)
 
-        # # Normalizing the rewards
-        # rewards = torch.tensor(rewards, dtype=torch.float32).to(self.device)
-        # rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
+        # Normalizing the rewards
+        rewards = torch.tensor(rewards, dtype=torch.float32).to(self.device)
+        rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
 
         # # convert list to tensor
         old_states = (
@@ -296,35 +299,35 @@ class LILI_LSTM:
             .detach()
             .to(self.device)
         )
-        # old_state_all = (
-        #     torch.squeeze(torch.stack(self.buffer.state_all, dim=0))
-        #     .detach()
-        #     .to(self.device)
-        # )
-        # old_actions = (
-        #     torch.squeeze(torch.stack(self.buffer.actions, dim=0))
-        #     .detach()
-        #     .to(self.device)
-        # )
+        old_state_all = (
+            torch.squeeze(torch.stack(self.buffer.state_all, dim=0))
+            .detach()
+            .to(self.device)
+        )
+        old_actions = (
+            torch.squeeze(torch.stack(self.buffer.actions, dim=0))
+            .detach()
+            .to(self.device)
+        )
         old_another_actions = (
             torch.squeeze(torch.stack(self.buffer.another_actions, dim=0))
             .detach()
             .to(self.device)
         )
-        # old_logprobs = (
-        #     torch.squeeze(torch.stack(self.buffer.logprobs, dim=0))
-        #     .detach()
-        #     .to(self.device)
-        # )
-        # old_state_values = (
-        #     torch.squeeze(torch.stack(self.buffer.state_values, dim=0))
-        #     .detach()
-        #     .to(self.device)
-        # )
+        old_logprobs = (
+            torch.squeeze(torch.stack(self.buffer.logprobs, dim=0))
+            .detach()
+            .to(self.device)
+        )
+        old_state_values = (
+            torch.squeeze(torch.stack(self.buffer.state_values, dim=0))
+            .detach()
+            .to(self.device)
+        )
 
         # calculate advantages
-        # advantages = rewards.detach() - old_state_values.detach()
-        # actions_t = old_actions.unsqueeze(1).detach()
+        advantages = rewards.detach() - old_state_values.detach()
+        actions_t = old_actions.unsqueeze(1).detach()
 
         # Optimize policy for K epochs
         total_loss = 0
@@ -332,41 +335,60 @@ class LILI_LSTM:
 
         taus = torch.cat(self.buffer.taus, 0)
 
-        for _ in range(self.K_epochs):
-            # Evaluating old actions and values
-            # logprobs, state_values, dist_entropy = self.policy.evaluate(
-            #     old_state_all, old_actions
-            # )
-
-            # # match state_values tensor dimensions with rewards tensor
-            # state_values = torch.squeeze(state_values)
-
-            # # Finding the ratio (pi_theta / pi_theta__old)
-            # ratios = torch.exp(logprobs - old_logprobs.detach())
-
-            # # Finding Surrogate Loss
-            # surr1 = ratios * advantages
-            # surr2 = (
-            #     torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
-            # )
-
-            # # final loss of clipped objective PPO
-            # critique_loss = self.MseLoss(state_values, rewards)
-            # loss = -torch.min(surr1, surr2) + 0.5 * critique_loss - 0.01 * dist_entropy
-
-            # self.optimizer.zero_grad()
-            # loss.mean().backward()
-            # self.optimizer.step()
-
+        if self.ed_pretrain < 100:
             for i in range(5):
                 action_dist = self.encoder_decoder(old_states, taus)
                 ed_loss = F.cross_entropy(action_dist, old_another_actions)
                 self.ed_optimizer.zero_grad()
                 ed_loss.backward()
                 self.ed_optimizer.step()
+                total_ed_loss += ed_loss
+            if self.cfg is not None and self.cfg.track:
+                if self.cfg.track:
+                    self.run.log(
+                        {
+                            "ed_loss": total_ed_loss.item(),
+                        }
+                    )
+        else:
+            for _ in range(self.K_epochs):
+                # Evaluating old actions and values
+                logprobs, state_values, dist_entropy = self.policy.evaluate(
+                    old_state_all, old_actions
+                )
 
-            # total_loss += loss.mean()
-            total_ed_loss += ed_loss
+                # match state_values tensor dimensions with rewards tensor
+                state_values = torch.squeeze(state_values)
+
+                # Finding the ratio (pi_theta / pi_theta__old)
+                ratios = torch.exp(logprobs - old_logprobs.detach())
+
+                # Finding Surrogate Loss
+                surr1 = ratios * advantages
+                surr2 = (
+                    torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
+                    * advantages
+                )
+
+                # final loss of clipped objective PPO
+                critique_loss = self.MseLoss(state_values, rewards)
+                loss = (
+                    -torch.min(surr1, surr2) + 0.5 * critique_loss - 0.01 * dist_entropy
+                )
+
+                self.optimizer.zero_grad()
+                loss.mean().backward()
+                self.optimizer.step()
+
+                total_loss += loss.mean()
+
+            if self.cfg is not None and self.cfg.track:
+                if self.cfg.track:
+                    self.run.log(
+                        {
+                            "loss": total_loss.item(),
+                        }
+                    )
 
             # self.hidden = None
             # predicted_states = []
@@ -427,15 +449,8 @@ class LILI_LSTM:
             # lstm_loss.backward()
             # self.hidden_optimizer.step()
 
-        if self.cfg is not None and self.cfg.track:
-            if self.cfg.track:
-                self.run.log(
-                    {
-                        "loss": total_loss.item(),
-                        "hidden_loss": total_ed_loss.item(),
-                    }
-                )
-        print(total_ed_loss)
+        self.ed_pretrain += 1
+
         # Copy new weights into old policy
 
         self.policy_old.load_state_dict(self.policy.state_dict())

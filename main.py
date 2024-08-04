@@ -52,7 +52,7 @@ def train(
             run=run,
         )
 
-    elif agent_type == "ppo":
+    elif agent_type == "PPO":
         print(
             "============================================================================================"
         )
@@ -115,60 +115,40 @@ def train(
         for t in range(1, cfg.max_cycle + 2):
             for agent in env.possible_agents:
                 state, reward, done, truncated, info = env.last()
-                if agent == "flex_agent":
-                    env.action_space(agent).sample()
-                    agents["flex_agent"].buffer.states.append(torch.tensor(state))
-                    if t > 2:
-                        tau = agents["flex_agent"].make_one_tau(
-                            state, done or truncated
-                        )
-                    else:
-                        tau = torch.zeros(
-                            (agents["flex_agent"].encoder_input_dim)
-                        ).unsqueeze(0)
-                    agents["flex_agent"].buffer.taus.append(tau)
+                end = done or truncated
+                action = agents[agent].select_action(state, t, end)
 
+                if agents[agent] == flex_agent:
+                    agents[agent].buffer.rewards.append(reward)
+                    agents[agent].buffer.is_terminals.append(done)
                 else:
-                    action = agents[agent].select_action(state, 0, truncated)
                     agents["flex_agent"].buffer.another_actions.append(
                         torch.tensor(action)
                     )
-
-                # state, reward, done, truncated, info = env.last()
-                # end = done or truncated
-                # action = agents[agent].select_action(state, t, end)
-
-                # if agents[agent] == flex_agent:
-                #     agents[agent].buffer.rewards.append(reward)
-                #     agents[agent].buffer.is_terminals.append(done)
-                # else:
-                #     agents["flex_agent"].buffer.another_actions.append(
-                #         torch.tensor(action)
-                #     )
 
                 time_step += 1
                 current_ep_reward += reward
 
                 # printing average reward
-                # if time_step % cfg.print_freq == 0:
-                #     # print average reward till last episode
-                #     print_avg_reward = print_running_reward / print_running_episodes
-                #     print_avg_reward = round(print_avg_reward, 2)
+                if time_step % cfg.print_freq == 0:
+                    # print average reward till last episode
+                    print_avg_reward = print_running_reward / print_running_episodes
+                    print_avg_reward = round(print_avg_reward, 2)
 
-                #     print(
-                #         "Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(
-                #             i_episode, time_step, print_avg_reward
-                #         )
-                #     )
+                    print(
+                        "Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(
+                            i_episode, time_step, print_avg_reward
+                        )
+                    )
 
-                #     print_running_reward = 0
-                #     print_running_episodes = 0
-                #     if cfg.track:
-                #         run.log(
-                #             {
-                #                 "average_reward": print_avg_reward,
-                #             }
-                #         )
+                    print_running_reward = 0
+                    print_running_episodes = 0
+                    if cfg.track:
+                        run.log(
+                            {
+                                "average_reward": print_avg_reward,
+                            }
+                        )
 
                 # save model weights
                 if time_step % cfg.save_model_freq == 0:
@@ -297,16 +277,6 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
     lili_lstm.load(lili_lstm_check_point)
     lili_lstm.load_ed(lili_lstm_check_point)
 
-    lili_model_name = f"lili_{cfg.agent_num}agent_{cfg.landmark_num}land"
-    lili_check_point = directory + f"{lili_model_name}.pth"
-    lili = LILI(
-        state_dim,
-        action_dim,
-        cfg.z_dim,
-        device,
-        cfg,
-        run=run,
-    )
     ppo_model_name = f"ppo_{cfg.agent_num}agent_{cfg.landmark_num}land"
     ppo_check_point = directory + f"{ppo_model_name}.pth"
     ppo = PPO(
@@ -316,56 +286,43 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
         cfg,
         run=run,
     )
-    lili.load(lili_check_point)
-    lili.load_ed(lili_check_point)
     ppo.load(ppo_check_point)
 
     another_agent = ANOTHER_AGENT(test_env, 0.0)
 
     flex_types = [
-        "ppo",
-        "lili",
-        "lili_lstm",
+        "PPO",
+        "Proposed Method",
     ]
 
-    lili_agents = {}
     ppo_agents = {}
     lili_lstm_agents = {}
-    lili_agents[test_env.possible_agents[0]] = another_agent
-    lili_agents[test_env.possible_agents[1]] = lili
     ppo_agents[test_env.possible_agents[0]] = another_agent
     ppo_agents[test_env.possible_agents[1]] = ppo
     lili_lstm_agents[test_env.possible_agents[0]] = another_agent
     lili_lstm_agents[test_env.possible_agents[1]] = lili_lstm
 
     test_agents_dict = {}
-    test_agents_dict["ppo"] = ppo_agents
-    test_agents_dict["lili"] = lili_agents
-    test_agents_dict["lili_lstm"] = lili_lstm_agents
+    test_agents_dict["PPO"] = ppo_agents
+    test_agents_dict["Proposed Method"] = lili_lstm_agents
 
     ppo_results = {}
-    lili_results = {}
     lili_lstm_results = {}
     results = {}
-    results["ppo"] = ppo_results
-    results["lili"] = lili_results
-    results["lili_lstm"] = lili_lstm_results
+    results["PPO"] = ppo_results
+    results["Proposed Method"] = lili_lstm_results
 
     ppo_collision = {}
-    lili_collision = {}
     lili_lstm_collision = {}
     collision_results = {}
-    collision_results["ppo"] = ppo_collision
-    collision_results["lili"] = lili_collision
-    collision_results["lili_lstm"] = lili_lstm_collision
+    collision_results["PPO"] = ppo_collision
+    collision_results["Proposed Method"] = lili_lstm_collision
 
     ppo_position = {}
-    lili_position = {}
     lili_lstm_position = {}
     position_results = {}
-    position_results["ppo"] = ppo_position
-    position_results["lili"] = lili_position
-    position_results["lili_lstm"] = lili_lstm_position
+    position_results["PPO"] = ppo_position
+    position_results["Proposed Method"] = lili_lstm_position
 
     latents = {}
     for another_type in test_env.world.another_agent_type_list:
@@ -404,7 +361,7 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
                             if info != {}:
                                 ep_position_reward += info["position_reward"]
                                 ep_collision_reward += info["collision_reward"]
-                            if flex_type == "lili_lstm" and t > 100:
+                            if flex_type == "Proposed Method" and t > 100:
                                 latent = test_agents[agent].buffer.latents[-1]
                                 latents[another_type] = np.concatenate(
                                     (latents[another_type], latent.reshape(1, -1)), 0
@@ -479,18 +436,10 @@ def test(cfg: DictConfig, run, test_env, recoder, device, directory):
             width=0.3,
             label=flex_types[1],
         )
-        ax.bar(
-            [i + 0.6 for i in x],
-            all_results[result_type][flex_types[2]].values(),
-            width=0.3,
-            label=flex_types[2],
-        )
 
         ax.set_xlabel("Another Agent Type")
         ax.set_ylabel("Average Reward")
-        ax.set_title(
-            f"{result_type}_comparison of {flex_types[0]} and {flex_types[1]} and {flex_types[2]}"
-        )
+        # ax.set_title(f"{result_type}_comparison of {flex_types[0]} and {flex_types[1]}")
         ax.set_xticks([i + 0.2 for i in x])
         ax.set_xticklabels(labels)
         ax.legend()
@@ -535,12 +484,12 @@ def main(cfg: DictConfig):
         render_mode="rgb_array",
     )
 
-    agent_type = ["ppo", "lili", "lili_lstm"][cfg.model_number]
+    agent_type = ["PPO", "lili", "Proposed Method"][cfg.model_number]
 
-    if agent_type == "ppo" or agent_type == "lili":
+    if agent_type == "PPO" or agent_type == "lili":
         cuda_num = 0
     else:
-        cuda_num = 1
+        cuda_num = 0
 
     if cfg.train:
         name = f"{agent_type}_{cfg.agent_num}agent_{cfg.landmark_num}land"
