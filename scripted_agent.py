@@ -14,7 +14,7 @@ class ANOTHER_AGENT:
 
     def set_agent_type(self, agent_type):
         self.agent_type = agent_type
-        if agent_type == "circle":
+        if agent_type == "Circle":
             sign = random.choice([-1, 1])
             self.speed = (math.pi / random.randint(5, 20)) * sign
             self.direction = np.array([(max(random.random(), 0.25)) * 2, 0])  # 初期方向
@@ -32,14 +32,14 @@ class ANOTHER_AGENT:
         if random.random() < self.random_prob:
             return np.random.choice(5, size=1, p=[0.2, 0.2, 0.2, 0.2, 0.2])[0]
 
-        if self.agent_type == "fixed" or self.agent_type == "fixed_dynamics":
+        if self.agent_type == "Fixed" or self.agent_type == "fixed_dynamics":
             fixed_landmark_no = self.env.world.fixed_landmark_no
             object_relpos = state[
                 4 + 2 * (fixed_landmark_no) : 4 + 2 * (fixed_landmark_no + 1)
             ]
-        elif self.agent_type == "following":
+        elif self.agent_type == "Following":
             object_relpos = state[-4:-2]
-        elif self.agent_type == "circle":
+        elif self.agent_type == "Circle":
             self.velocity = state[0:2]
             x, y = state[2:4]
             return self.circle(x, y)
