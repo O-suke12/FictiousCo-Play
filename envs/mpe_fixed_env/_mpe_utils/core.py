@@ -91,9 +91,9 @@ class World:  # multi-agent world
         self.another_agent_type = None
         self.num_landmarks = None
         self.another_agent_type_list = [
-            "fixed",
-            "following",
-            "circle",
+            "Fixed",
+            "Following",
+            "Circle",
         ]
         # self.another_agent_type_list = [
         #     "right_up",

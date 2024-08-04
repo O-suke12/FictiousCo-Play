@@ -139,7 +139,7 @@ class Scenario(BaseScenario):
             agent.size = 0.15
         # add landmarks
         world.landmarks = [Landmark() for i in range(num_landmarks)]
-        if another_agent_type == "fixed_dynamics" or another_agent_type == "fixed":
+        if another_agent_type == "fixed_dynamics" or another_agent_type == "Fixed":
             world.fixed_landmark_no = random.randrange(num_landmarks)
         else:
             world.fixed_landmark_no = None
@@ -177,7 +177,7 @@ class Scenario(BaseScenario):
 
         if (
             world.another_agent_type == "fixed_dynamics"
-            or world.another_agent_type == "fixed"
+            or world.another_agent_type == "Fixed"
         ):
             world.fixed_landmark_no = random.randrange(world.num_landmarks)
         else:

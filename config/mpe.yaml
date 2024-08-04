@@ -12,7 +12,7 @@ project_name: LILI_and_PPO_MPE
 
 track: False   
 train: False
-model_number: 2
+model_number: 0
 agent_num: 2
 landmark_num: 3
 
@@ -20,11 +20,11 @@ load_ed: False
 
 
 
-test_episode_num: 5
+test_episode_num: 50
 max_cycle:  100  # max timesteps in one episode
 max_training_timesteps:  900000  # break training loop if timeteps > max_training_timesteps
-save_model_freq: 100000  
-update_timestep: 10000 #update policy every n timesteps
+save_model_freq: 100000 
+update_timestep: 1000 #update policy every n timesteps
 print_freq: 10000  # print avg reward in the interval (in num timesteps)
 encoder_decoder_training_timesteps: 500
 
