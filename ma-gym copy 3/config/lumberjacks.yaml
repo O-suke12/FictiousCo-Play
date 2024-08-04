@@ -1,0 +1,32 @@
+defaults:  
+  - _self_  
+  - override hydra/hydra_logging: disabled  
+  - override hydra/job_logging: disabled  
+  
+hydra:  
+  output_subdir: null  
+  run:  
+    dir: .
+
+project_name: MA-GYM
+
+track: False   
+train: False
+model: ppo
+
+test_episode_num: 50
+max_training_timesteps:  4000000  # break training loop if timeteps > max_training_timesteps
+save_model_freq: 100000  
+update_timestep: 1000 #update policy every n timesteps
+print_freq: 10000  # print avg reward in the interval (in num timesteps)
+
+latent_dim: 8
+hidden_dim: 32
+
+
+K_epochs: 5  #元は80 update policy for K epochs in one PPO update
+eps_clip: 0.2  # clip parameter for PPO
+gamma: 0.99  # discount factor
+lr_actor: 0.0003  # learning rate for actor network
+lr_critic: 0.001  # learning rate for critic network
+random_seed: 0  # set random seed if required (0 = no random seed)
